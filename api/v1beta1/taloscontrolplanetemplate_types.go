@@ -97,5 +97,5 @@ type TalosControlPlaneTemplateList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&TalosControlPlaneTemplate{}, &TalosControlPlaneTemplateList{})
+	register(&TalosControlPlaneTemplate{}, &TalosControlPlaneTemplateList{})
 }
