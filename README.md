@@ -34,11 +34,12 @@ This provider's versions are compatible with the following versions of Cluster A
 | Control Plane Provider Talos v1alpha3 (v0.5) |                 |                 | ✓              |                  |
 | Control Plane Provider Talos v1alpha3 (v0.6) |                 |                 |                | ✓                |
 | Control Plane Provider Talos v1alpha3 (v0.7) |                 |                 |                | ✓                |
+| Control Plane Provider Talos v1alpha3 (v0.8) |                 |                 |                | ✓                |
 
-The `v0.6.x` and `v0.7.x` release series target the Cluster API `v1beta2` contract (CAPI core `v1.12+`; `v0.7.x` is built against `v1.14.2`, which adds Kubernetes 1.37 for management and workload clusters).
+The `v0.6.x`, `v0.7.x` and `v0.8.x` release series target the Cluster API `v1beta2` contract (CAPI core `v1.12+`; `v0.8.x` is built against `v1.14.2`, which adds Kubernetes 1.37 for management and workload clusters).
 Released `v0.5.x` artifacts remain on `v1beta1`; `config/metadata/metadata.yaml` advertises the `v0.6` series as `v1beta2`.
 
-The `v0.7.x` series drops `spec.controlPlaneConfig.init` (deprecated since v0.4.0) and the
+The `v0.8.x` series drops `spec.controlPlaneConfig.init` (deprecated since v0.4.0) and the
 `status.deprecated.v1beta1` block; v1alpha3 clients still see the old-shape status, derived from
 the v1beta2 fields.
 
@@ -51,7 +52,8 @@ This provider's versions are able to install and manage the following versions o
 | Control Plane Provider Talos v1alpha3 (v0.4) |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |       |       |       |       |       |       |       |       |       |       |       |
 | Control Plane Provider Talos v1alpha3 (v0.5) |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |       |
 | Control Plane Provider Talos v1alpha3 (v0.6) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |       |
-| Control Plane Provider Talos v1alpha3 (v0.7) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
+| Control Plane Provider Talos v1alpha3 (v0.7) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |       |
+| Control Plane Provider Talos v1alpha3 (v0.8) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
 
 This provider's versions are compatible with the following versions of Talos:
 
@@ -62,7 +64,8 @@ This provider's versions are compatible with the following versions of Talos:
 | Control Plane Provider Talos v1alpha3 (v0.4) | ✓     | ✓      | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |       |       |       |       |       |       |       |       |       |       |       |
 | Control Plane Provider Talos v1alpha3 (v0.5) |       |        |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |       |
 | Control Plane Provider Talos v1alpha3 (v0.6) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     |       |
-| Control Plane Provider Talos v1alpha3 (v0.7) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
+| Control Plane Provider Talos v1alpha3 (v0.7) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     |       |
+| Control Plane Provider Talos v1alpha3 (v0.8) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
 
 ## Building and Installing
 
@@ -99,7 +102,7 @@ If you are going to use this provider as part of Sidero management plane, please
 on how to install and configure it.
 
 This project can be built simply by running `make release` from the root directory.
-Building requires Go 1.26+ (the `v0.7.x` series depends on CAPI `v1.14.2` / controller-runtime `v0.24`).
+Building requires Go 1.26+ (the `v0.8.x` series depends on CAPI `v1.14.2` / controller-runtime `v0.24`).
 Doing so will create a file called `_out/control-plane-components.yaml`.
 If you wish, you can tweak settings by editing the release yaml.
 This file can then be installed into your management cluster with `kubectl apply -f _out/control-plane-components.yaml`.
