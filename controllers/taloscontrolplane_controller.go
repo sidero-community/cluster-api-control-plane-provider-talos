@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/controllers/clustercache"
@@ -63,7 +63,7 @@ type TalosControlPlaneReconciler struct {
 	Log          logr.Logger
 	Scheme       *runtime.Scheme
 	ClusterCache clustercache.ClusterCache
-	Recorder     record.EventRecorder
+	Recorder     events.EventRecorder
 
 	// RuntimeClient calls Cluster API runtime extensions. It is nil unless the InPlaceUpdates
 	// feature gate is enabled, and in-place updates are skipped when it is.

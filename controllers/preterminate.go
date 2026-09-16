@@ -573,5 +573,5 @@ func (r *TalosControlPlaneReconciler) recordMachineEvent(machine *clusterv1.Mach
 		return
 	}
 
-	r.Recorder.Event(machine, eventType, reason, message)
+	r.Recorder.Eventf(machine, nil, eventType, reason, "PreTerminate", "%s", message)
 }

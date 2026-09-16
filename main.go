@@ -203,7 +203,7 @@ func main() {
 		Log:                           ctrl.Log.WithName("controllers").WithName("TalosControlPlane"),
 		Scheme:                        mgr.GetScheme(),
 		ClusterCache:                  clusterCache,
-		Recorder:                      mgr.GetEventRecorderFor("taloscontrolplane-controller"),
+		Recorder:                      mgr.GetEventRecorder("taloscontrolplane-controller"),
 		RuntimeClient:                 runtimeCaller,
 		EnableMachinePreTerminateHook: enableMachinePreTerminateHook,
 		EtcdCleanupTimeout:            etcdCleanupTimeout,

@@ -19,7 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -161,7 +161,7 @@ type preTerminateFixture struct {
 	tcp      *controlplanev1.TalosControlPlane
 	machines *clusterv1.MachineList
 	dialer   *fakeEtcdDialer
-	recorder *record.FakeRecorder
+	recorder *events.FakeRecorder
 }
 
 func preTerminateScheme(t *testing.T) *runtime.Scheme {
@@ -294,7 +294,7 @@ func newPreTerminateFixtureWithTCP(t *testing.T, tcp *controlplanev1.TalosContro
 		Build()
 
 	dialer := newFakeEtcdDialer()
-	recorder := record.NewFakeRecorder(64)
+	recorder := events.NewFakeRecorder(64)
 
 	return &preTerminateFixture{
 		r: &TalosControlPlaneReconciler{
