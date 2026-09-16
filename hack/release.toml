@@ -15,6 +15,14 @@ preface = """\
 
 [notes]
 
+[notes.capi]
+    title = "Cluster API"
+        description = """\
+CACPPT is now built against CAPI v1.14 (v1beta2 contract, unchanged), which adds
+Kubernetes 1.37 for management and workload clusters. Kubernetes 1.37 workload
+clusters need CAPI core v1.14.1 or later on the management cluster.
+"""
+
 [notes.talos]
     title = "Talos Linux"
         description = """\
