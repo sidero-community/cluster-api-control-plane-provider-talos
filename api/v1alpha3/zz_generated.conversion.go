@@ -20,7 +20,6 @@ import (
 	conversion "k8s.io/apimachinery/pkg/conversion"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	intstr "k8s.io/apimachinery/pkg/util/intstr"
-	corev1beta1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 	v1beta2 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -76,13 +75,18 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddConversionFunc((*v1.Condition)(nil), (*corev1beta1.Condition)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1_Condition_To_v1beta1_Condition(a.(*v1.Condition), b.(*corev1beta1.Condition), scope)
+	if err := s.AddConversionFunc((*v1.Condition)(nil), (*Condition)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1_Condition_To_v1alpha3_Condition(a.(*v1.Condition), b.(*Condition), scope)
 	}); err != nil {
 		return err
 	}
 	if err := s.AddConversionFunc((*corev1.ObjectReference)(nil), (*v1beta2.ContractVersionedObjectReference)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1_ObjectReference_To_v1beta2_ContractVersionedObjectReference(a.(*corev1.ObjectReference), b.(*v1beta2.ContractVersionedObjectReference), scope)
+	}); err != nil {
+		return err
+	}
+	if err := s.AddConversionFunc((*Condition)(nil), (*v1.Condition)(nil), func(a, b interface{}, scope conversion.Scope) error {
+		return Convert_v1alpha3_Condition_To_v1_Condition(a.(*Condition), b.(*v1.Condition), scope)
 	}); err != nil {
 		return err
 	}
@@ -106,11 +110,6 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
-	if err := s.AddConversionFunc((*corev1beta1.Condition)(nil), (*v1.Condition)(nil), func(a, b interface{}, scope conversion.Scope) error {
-		return Convert_v1beta1_Condition_To_v1_Condition(a.(*corev1beta1.Condition), b.(*v1.Condition), scope)
-	}); err != nil {
-		return err
-	}
 	if err := s.AddConversionFunc((*apiv1beta1.TalosConfigSpec)(nil), (*apiv1alpha3.TalosConfigSpec)(nil), func(a, b interface{}, scope conversion.Scope) error {
 		return Convert_v1beta1_TalosConfigSpec_To_v1alpha3_TalosConfigSpec(a.(*apiv1beta1.TalosConfigSpec), b.(*apiv1alpha3.TalosConfigSpec), scope)
 	}); err != nil {
@@ -131,6 +130,26 @@ func RegisterConversions(s *runtime.Scheme) error {
 	}); err != nil {
 		return err
 	}
+	return nil
+}
+
+func autoConvert_v1alpha3_Condition_To_v1_Condition(in *Condition, out *v1.Condition, s conversion.Scope) error {
+	out.Type = string(in.Type)
+	out.Status = v1.ConditionStatus(in.Status)
+	// WARNING: in.Severity requires manual conversion: does not exist in peer-type
+	out.LastTransitionTime = in.LastTransitionTime
+	out.Reason = in.Reason
+	out.Message = in.Message
+	return nil
+}
+
+func autoConvert_v1_Condition_To_v1alpha3_Condition(in *v1.Condition, out *Condition, s conversion.Scope) error {
+	out.Type = ConditionType(in.Type)
+	out.Status = corev1.ConditionStatus(in.Status)
+	// WARNING: in.ObservedGeneration requires manual conversion: does not exist in peer-type
+	out.LastTransitionTime = in.LastTransitionTime
+	out.Reason = in.Reason
+	out.Message = in.Message
 	return nil
 }
 
@@ -308,7 +327,7 @@ func autoConvert_v1alpha3_TalosControlPlaneStatus_To_v1beta1_TalosControlPlaneSt
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]v1.Condition, len(*in))
 		for i := range *in {
-			if err := Convert_v1beta1_Condition_To_v1_Condition(&(*in)[i], &(*out)[i], s); err != nil {
+			if err := Convert_v1alpha3_Condition_To_v1_Condition(&(*in)[i], &(*out)[i], s); err != nil {
 				return err
 			}
 		}
@@ -323,9 +342,9 @@ func autoConvert_v1alpha3_TalosControlPlaneStatus_To_v1beta1_TalosControlPlaneSt
 func autoConvert_v1beta1_TalosControlPlaneStatus_To_v1alpha3_TalosControlPlaneStatus(in *v1beta1.TalosControlPlaneStatus, out *TalosControlPlaneStatus, s conversion.Scope) error {
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
-		*out = make(corev1beta1.Conditions, len(*in))
+		*out = make(Conditions, len(*in))
 		for i := range *in {
-			if err := Convert_v1_Condition_To_v1beta1_Condition(&(*in)[i], &(*out)[i], s); err != nil {
+			if err := Convert_v1_Condition_To_v1alpha3_Condition(&(*in)[i], &(*out)[i], s); err != nil {
 				return err
 			}
 		}
@@ -341,6 +360,5 @@ func autoConvert_v1beta1_TalosControlPlaneStatus_To_v1alpha3_TalosControlPlaneSt
 	out.Version = (*string)(unsafe.Pointer(in.Version))
 	out.ObservedGeneration = in.ObservedGeneration
 	out.Bootstrapped = in.Bootstrapped
-	// WARNING: in.Deprecated requires manual conversion: does not exist in peer-type
 	return nil
 }

@@ -6,11 +6,14 @@ package v1alpha3
 
 import (
 	"testing"
+	"time"
 
 	cabptv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	cabptv1beta1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	utilconversion "sigs.k8s.io/cluster-api/util/conversion"
 	"sigs.k8s.io/randfill"
 
@@ -135,4 +138,32 @@ func TestInitConfigDoesNotReachTheHub(t *testing.T) {
 	back := &TalosControlPlane{}
 	require.NoError(t, back.ConvertFrom(hub))
 	require.Empty(t, back.Spec.ControlPlaneConfig.InitConfig.GenerateType, "nothing restores init from a hub object that never had it")
+}
+
+// Every legacy status field a v1alpha3 client reads is derived from the v1beta2 status.
+func TestControlPlaneStatusConvertFromDerivesTheLegacyFields(t *testing.T) {
+	t.Parallel()
+
+	transition := metav1.NewTime(time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC))
+	hub := &cpv1beta1.TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{Name: "cp", Namespace: "default"},
+		Status: cpv1beta1.TalosControlPlaneStatus{
+			Initialization:   cpv1beta1.TalosControlPlaneInitializationStatus{ControlPlaneInitialized: ptr.To(true)},
+			Replicas:         3,
+			ReadyReplicas:    2,
+			UpToDateReplicas: ptr.To[int32](1),
+			Conditions: []metav1.Condition{{
+				Type: "Available", Status: metav1.ConditionTrue, Reason: "Available", LastTransitionTime: transition,
+			}},
+		},
+	}
+
+	spoke := &TalosControlPlane{}
+	require.NoError(t, spoke.ConvertFrom(hub))
+
+	require.True(t, spoke.Status.Initialized)
+	require.True(t, spoke.Status.Ready)
+	require.EqualValues(t, 1, spoke.Status.UnavailableReplicas)
+	require.Nil(t, spoke.Status.FailureReason)
+	require.Equal(t, Conditions{{Type: "Available", Status: corev1.ConditionTrue, Reason: "Available", LastTransitionTime: transition}}, spoke.Status.Conditions)
 }

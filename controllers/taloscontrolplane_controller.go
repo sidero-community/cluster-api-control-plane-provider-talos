@@ -192,8 +192,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// Make TCP to requeue in case status is not ready, so we can check for node status without waiting for a full resync (by default 10 minutes).
 		// Only requeue if we are not going in exponential backoff due to error, or if we are not already re-queueing, or if the object has a deletion timestamp.
 		if reterr == nil && res.RequeueAfter <= 0 && tcp.ObjectMeta.DeletionTimestamp.IsZero() {
-			deprecated := tcp.V1Beta1DeprecatedStatus()
-			if !deprecated.Ready || deprecated.UnavailableReplicas > 0 {
+			if tcp.Status.ReadyReplicas == 0 || tcp.Status.ReadyReplicas < tcp.Status.Replicas {
 				res = ctrl.Result{RequeueAfter: 20 * time.Second}
 			}
 		}
@@ -698,10 +697,6 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	replicas := int32(nonDeletingMachines.Len())
 
 	// set basic data that does not require interacting with the workload cluster
-	deprecated := tcp.V1Beta1DeprecatedStatus()
-	deprecated.Ready = false
-	deprecated.UpdatedReplicas = 0
-	deprecated.UnavailableReplicas = replicas
 	tcp.Status.Replicas = replicas
 	tcp.Status.ReadyReplicas = 0
 	tcp.Status.AvailableReplicas = ptr.To[int32](0)
@@ -721,7 +716,6 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	if err != nil {
 		r.Log.Info("failed to compute updated replica status", "error", err)
 	} else {
-		deprecated.UpdatedReplicas = int32(len(controlPlane.Machines) - len(controlPlane.MachinesWithOutdatedRolloutSpec()))
 
 		// Set the v1beta2 UpToDate condition on each owned control plane Machine.
 		// Core Machine controller skips UpToDate for stand-alone Machines, so the
@@ -756,11 +750,6 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	tcp.Status.UpToDateReplicas = ptr.To(upToDateReplicas)
 	tcp.Status.ReadyReplicas = readyReplicas
 
-	deprecated.UnavailableReplicas = replicas - readyReplicas
-	if readyReplicas > 0 {
-		deprecated.Ready = true
-	}
-
 	// Probe workload cluster reachability to set Initialized + AvailableCondition. Failure here
 	// only suppresses the AvailableCondition; replica counters stay accurate.
 	c, err := r.ClusterCache.GetClient(ctx, util.ObjectKey(cluster))
@@ -784,7 +773,6 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 
 	// if we were able to fetch some resources via control plane endpoint,
 	// workload cluster control plane endpoint is available
-	deprecated.Initialized = true
 	tcp.Status.Initialization.ControlPlaneInitialized = ptr.To(true)
 	conditions.Set(tcp, metav1.Condition{
 		Type:   string(controlplanev1.AvailableCondition),

@@ -4,7 +4,7 @@
 
 package v1alpha3
 
-import capiv1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+import clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 
 // Aliases for the v1beta2 condition surface preserved on the
 // TalosControlPlaneV1Beta2Status round-trip holder. These mirror the standard
@@ -13,25 +13,25 @@ import capiv1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 
 const (
 	// ReadyV1Beta2Condition reports whether the TalosControlPlane is ready.
-	ReadyV1Beta2Condition = capiv1.ReadyV1Beta2Condition
+	ReadyV1Beta2Condition = clusterv1.ReadyCondition
 
 	// ReadyV1Beta2Reason surfaces when the TalosControlPlane is ready.
-	ReadyV1Beta2Reason = capiv1.ReadyV1Beta2Reason
+	ReadyV1Beta2Reason = clusterv1.ReadyReason
 
 	// NotReadyV1Beta2Reason surfaces when the TalosControlPlane is not ready.
-	NotReadyV1Beta2Reason = capiv1.NotReadyV1Beta2Reason
+	NotReadyV1Beta2Reason = clusterv1.NotReadyReason
 
 	// ReadyUnknownV1Beta2Reason surfaces when the TalosControlPlane readiness is unknown.
-	ReadyUnknownV1Beta2Reason = capiv1.ReadyUnknownV1Beta2Reason
+	ReadyUnknownV1Beta2Reason = clusterv1.ReadyUnknownReason
 )
 
 const (
 	// AvailableV1Beta2Condition reports whether the TalosControlPlane is available.
-	AvailableV1Beta2Condition = capiv1.AvailableV1Beta2Condition
+	AvailableV1Beta2Condition = clusterv1.AvailableCondition
 
 	// AvailableV1Beta2Reason surfaces when the TalosControlPlane is available.
-	AvailableV1Beta2Reason = capiv1.AvailableV1Beta2Reason
+	AvailableV1Beta2Reason = clusterv1.AvailableReason
 
 	// NotAvailableV1Beta2Reason surfaces when the TalosControlPlane is not available.
-	NotAvailableV1Beta2Reason = capiv1.NotAvailableV1Beta2Reason
+	NotAvailableV1Beta2Reason = clusterv1.NotAvailableReason
 )

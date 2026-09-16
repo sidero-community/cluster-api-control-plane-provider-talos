@@ -229,10 +229,6 @@ type TalosControlPlaneStatus struct {
 	// which is required to start etcd and Kubernetes components in Talos.
 	// +optional
 	Bootstrapped bool `json:"bootstrapped,omitempty"`
-
-	// deprecated groups all the status fields that are deprecated and will be removed when all the nested fields are removed.
-	// +optional
-	Deprecated *TalosControlPlaneDeprecatedStatus `json:"deprecated,omitempty"`
 }
 
 // TalosControlPlaneInitializationStatus provides observations of the TalosControlPlane initialization process.
@@ -246,71 +242,6 @@ type TalosControlPlaneInitializationStatus struct {
 	// initial Machine provisioning.
 	// +optional
 	ControlPlaneInitialized *bool `json:"controlPlaneInitialized,omitempty"`
-}
-
-// TalosControlPlaneDeprecatedStatus groups all the status fields that are deprecated and will be removed in a future version.
-type TalosControlPlaneDeprecatedStatus struct {
-	// v1beta1 groups all the status fields that are deprecated and will be removed when support for CAPI v1beta1 contract will be dropped.
-	// +optional
-	V1Beta1 *TalosControlPlaneV1Beta1DeprecatedStatus `json:"v1beta1,omitempty"`
-}
-
-// TalosControlPlaneV1Beta1DeprecatedStatus groups all the status fields that are deprecated and will be removed when support for CAPI v1beta1 contract will be dropped.
-type TalosControlPlaneV1Beta1DeprecatedStatus struct {
-	// conditions defines the current service state of the TalosControlPlane using the legacy
-	// CAPI v1beta1 condition format.
-	//
-	// Deprecated: This field is deprecated and is going to be removed when support for CAPI v1beta1 contract will be dropped.
-	//
-	// +optional
-	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
-
-	// failureReason indicates that there is a terminal problem reconciling the
-	// state, and will be set to a token value suitable for
-	// programmatic interpretation.
-	//
-	// Deprecated: This field is deprecated and is going to be removed when support for CAPI v1beta1 contract will be dropped.
-	//
-	// +optional
-	FailureReason *string `json:"failureReason,omitempty"`
-
-	// failureMessage indicates that there is a terminal problem reconciling the
-	// state, and will be set to a descriptive error message.
-	//
-	// Deprecated: This field is deprecated and is going to be removed when support for CAPI v1beta1 contract will be dropped.
-	//
-	// +optional
-	FailureMessage *string `json:"failureMessage,omitempty"`
-
-	// initialized denotes whether or not the control plane has the uploaded talos-config configmap.
-	//
-	// Deprecated: This field is deprecated and is going to be removed when support for CAPI v1beta1 contract will be dropped.
-	// Use status.initialization.controlPlaneInitialized instead.
-	//
-	// +optional
-	Initialized bool `json:"initialized,omitempty"`
-
-	// ready denotes that the TalosControlPlane API Server is ready to receive requests.
-	//
-	// Deprecated: This field is deprecated and is going to be removed when support for CAPI v1beta1 contract will be dropped.
-	// Use the Available condition instead.
-	//
-	// +optional
-	Ready bool `json:"ready,omitempty"`
-
-	// updatedReplicas is the total number of non-terminated Machines targeted by this control plane that have the desired spec.
-	//
-	// Deprecated: This field is deprecated and is going to be removed when support for CAPI v1beta1 contract will be dropped.
-	//
-	// +optional
-	UpdatedReplicas int32 `json:"updatedReplicas,omitempty"`
-
-	// unavailableReplicas is the total number of unavailable machines targeted by this control plane.
-	//
-	// Deprecated: This field is deprecated and is going to be removed when support for CAPI v1beta1 contract will be dropped.
-	//
-	// +optional
-	UnavailableReplicas int32 `json:"unavailableReplicas,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -341,33 +272,6 @@ func (r *TalosControlPlane) GetConditions() []metav1.Condition {
 // SetConditions sets the conditions on this object.
 func (r *TalosControlPlane) SetConditions(conditions []metav1.Condition) {
 	r.Status.Conditions = conditions
-}
-
-// GetV1Beta1Conditions returns the legacy v1beta1 conditions for this object.
-func (r *TalosControlPlane) GetV1Beta1Conditions() clusterv1.Conditions {
-	if r.Status.Deprecated == nil || r.Status.Deprecated.V1Beta1 == nil {
-		return nil
-	}
-	return r.Status.Deprecated.V1Beta1.Conditions
-}
-
-// SetV1Beta1Conditions sets the legacy v1beta1 conditions for this object.
-func (r *TalosControlPlane) SetV1Beta1Conditions(conditions clusterv1.Conditions) {
-	r.V1Beta1DeprecatedStatus().Conditions = conditions
-}
-
-// V1Beta1DeprecatedStatus returns the legacy v1beta1 deprecated status struct,
-// allocating it (and its parent) on demand. Used by controllers that still maintain
-// legacy CAPI v1beta1 contract status fields (Ready, Initialized, UnavailableReplicas,
-// UpdatedReplicas, FailureReason, FailureMessage).
-func (r *TalosControlPlane) V1Beta1DeprecatedStatus() *TalosControlPlaneV1Beta1DeprecatedStatus {
-	if r.Status.Deprecated == nil {
-		r.Status.Deprecated = &TalosControlPlaneDeprecatedStatus{}
-	}
-	if r.Status.Deprecated.V1Beta1 == nil {
-		r.Status.Deprecated.V1Beta1 = &TalosControlPlaneV1Beta1DeprecatedStatus{}
-	}
-	return r.Status.Deprecated.V1Beta1
 }
 
 // +kubebuilder:object:root=true

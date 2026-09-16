@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
 )
 
 const (
@@ -168,7 +167,7 @@ type TalosControlPlaneStatus struct {
 
 	// Conditions defines current service state of the KubeadmControlPlane.
 	// +optional
-	Conditions clusterv1.Conditions `json:"conditions,omitempty"`
+	Conditions Conditions `json:"conditions,omitempty"`
 
 	// version represents the minimum Kubernetes version for the control plane machines
 	// in the cluster.
@@ -210,12 +209,12 @@ type TalosControlPlane struct {
 }
 
 // GetConditions returns the set of conditions for this object.
-func (r *TalosControlPlane) GetConditions() clusterv1.Conditions {
+func (r *TalosControlPlane) GetConditions() Conditions {
 	return r.Status.Conditions
 }
 
 // SetConditions sets the conditions on this object.
-func (r *TalosControlPlane) SetConditions(conditions clusterv1.Conditions) {
+func (r *TalosControlPlane) SetConditions(conditions Conditions) {
 	r.Status.Conditions = conditions
 }
 
