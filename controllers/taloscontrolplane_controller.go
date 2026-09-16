@@ -115,7 +115,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 	}
 
 	// Fetch the Cluster.
@@ -132,13 +132,13 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	if cluster == nil {
 		logger.Info("cluster Controller has not yet set OwnerRef")
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 	}
 	logger = logger.WithValues("cluster", cluster.Name)
 
 	if annotations.IsPaused(cluster, tcp) {
 		logger.Info("reconciliation is paused for this object")
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 	}
 
 	// Wait for the cluster infrastructure to be provisioned before creating machines.
@@ -148,14 +148,14 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	if !ptr.Deref(cluster.Status.Initialization.InfrastructureProvisioned, false) {
 		logger.Info("cluster infra not provisioned")
 
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 	}
 
 	// Initialize the patch helper.
 	patchHelper, err := patch.NewHelper(tcp, r.Client)
 	if err != nil {
 		logger.Error(err, "failed to configure the patch helper")
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 	}
 
 	// Add finalizer first if not exist to avoid the race condition between init and delete
@@ -191,7 +191,7 @@ func (r *TalosControlPlaneReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		// TODO: remove this as soon as we have a proper remote cluster cache in place.
 		// Make TCP to requeue in case status is not ready, so we can check for node status without waiting for a full resync (by default 10 minutes).
 		// Only requeue if we are not going in exponential backoff due to error, or if we are not already re-queueing, or if the object has a deletion timestamp.
-		if reterr == nil && !res.Requeue && res.RequeueAfter <= 0 && tcp.ObjectMeta.DeletionTimestamp.IsZero() {
+		if reterr == nil && res.RequeueAfter <= 0 && tcp.ObjectMeta.DeletionTimestamp.IsZero() {
 			deprecated := tcp.V1Beta1DeprecatedStatus()
 			if !deprecated.Ready || deprecated.UnavailableReplicas > 0 {
 				res = ctrl.Result{RequeueAfter: 20 * time.Second}
@@ -541,7 +541,7 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		return ctrl.Result{}, errors.Wrap(err, "Failed to create machine")
 	}
 
-	return ctrl.Result{Requeue: true}, nil
+	return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 }
 
 func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines []clusterv1.Machine) error {
@@ -1093,7 +1093,7 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 	case numMachines > desiredReplicas:
 		res, err = r.scaleDownControlPlane(ctx, cluster, tcp, controlPlane, collections.Machines{})
 		if err != nil {
-			if res.Requeue || res.RequeueAfter > 0 {
+			if res.RequeueAfter > 0 {
 				logger.Info("failed to scale down control plane", "error", err)
 
 				return res, nil

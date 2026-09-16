@@ -180,7 +180,7 @@ func (r *TalosControlPlaneReconciler) deleteControlPlaneMachine(
 		return result, err
 	}
 
-	result.Requeue = true
+	result.RequeueAfter = 20 * time.Second
 
 	return result, nil
 }

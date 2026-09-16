@@ -380,7 +380,7 @@ func (suite *ControllersSuite) TestReconcileInfrastructureNotProvisioned() {
 
 	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
 	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(result).To(Equal(ctrl.Result{Requeue: true}))
+	g.Expect(result).To(Equal(ctrl.Result{RequeueAfter: 20 * time.Second}))
 	g.Expect(r.Client.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
 	g.Expect(tcp.Finalizers).To(BeEmpty())
 }
@@ -1091,4 +1091,23 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 
 func TestSuite(t *testing.T) {
 	suite.Run(t, &ControllersSuite{})
+}
+
+// A paused cluster is looked at again after a fixed interval, not through the rate limiter.
+func (suite *ControllersSuite) TestReconcileRequeuesAPausedClusterAfterAFixedInterval() {
+	g := NewWithT(suite.T())
+
+	fakeClient := newFakeClient()
+	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-paused", nil)
+
+	g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(cluster), cluster)).To(Succeed())
+	cluster.Spec.Paused = ptr.To(true)
+	g.Expect(fakeClient.Update(suite.ctx, cluster)).To(Succeed())
+
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	// The paused check runs before the finalizer is added, so one reconcile is enough.
+	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result).To(Equal(ctrl.Result{RequeueAfter: 20 * time.Second}))
 }
