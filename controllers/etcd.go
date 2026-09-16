@@ -58,7 +58,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 
 			// check that etcd service is healthy on the node
 			for _, svc := range svcs {
-				node := svc.Metadata.GetHostname()
+				node := machine.Name
 
 				if len(svc.Service.Events.Events) == 0 {
 					return fmt.Errorf("%s: no events recorded yet for service %q", node, service)
@@ -83,7 +83,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 				actualMembers := len(message.Members)
 				expectedMembers := len(machines)
 
-				node := message.Metadata.GetHostname()
+				node := machine.Name
 
 				// check that the count of members is the same on all nodes
 				if actualMembers != expectedMembers {

@@ -413,6 +413,11 @@ type machineService struct {
 
 	requestsMu               sync.Mutex
 	etcdRemoveMemberRequests []*machine.EtcdRemoveMemberByIDRequest
+
+	// listEntries is what List streams back for any path; nil lists nothing.
+	listEntries []*machine.FileInfo
+	// bootstrapCalls counts Bootstrap requests.
+	bootstrapCalls int
 }
 
 func (ms *machineService) getEtcdRemoveMemberRequests() map[uint64]any {
@@ -456,7 +461,28 @@ func (ms *machineService) resetSequenceEvents() {
 }
 
 func (ms *machineService) Bootstrap(ctx context.Context, req *machine.BootstrapRequest) (*machine.BootstrapResponse, error) {
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+
+	ms.bootstrapCalls++
+
 	return &machine.BootstrapResponse{}, nil
+}
+
+// getBootstrapCalls returns how many times Bootstrap was requested.
+func (ms *machineService) getBootstrapCalls() int {
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+
+	return ms.bootstrapCalls
+}
+
+// setListEntries makes List stream the given entries for any path.
+func (ms *machineService) setListEntries(entries ...*machine.FileInfo) {
+	ms.lock.Lock()
+	defer ms.lock.Unlock()
+
+	ms.listEntries = entries
 }
 
 func (ms *machineService) EtcdMemberList(ctx context.Context, req *machine.EtcdMemberListRequest) (*machine.EtcdMemberListResponse, error) {
@@ -471,6 +497,16 @@ func (ms *machineService) EtcdMemberList(ctx context.Context, req *machine.EtcdM
 }
 
 func (ms *machineService) List(req *machine.ListRequest, serv machine.MachineService_ListServer) error {
+	ms.lock.Lock()
+	entries := ms.listEntries
+	ms.lock.Unlock()
+
+	for _, entry := range entries {
+		if err := serv.Send(entry); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

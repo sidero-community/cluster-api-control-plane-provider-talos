@@ -596,37 +596,52 @@ func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp 
 		return fmt.Errorf("no machine addresses to use for bootstrap")
 	}
 
-	list, err := c.LS(talosclient.WithNodes(ctx, addresses...), &machineapi.ListRequest{Root: "/var/lib/etcd/member"})
-	if err != nil {
-		return err
-	}
-
-	for {
-		info, err := list.Recv()
+	// If the etcd data directory exists on at least one node the cluster was already
+	// bootstrapped. Each node is asked on its own: Talos deprecated server-side fan-out, so a
+	// node that cannot answer surfaces as an error for that node rather than as a per-message
+	// status, and is treated the same way (as not bootstrapped there).
+	for _, address := range addresses {
+		bootstrapped, err := hasEtcdData(talosclient.WithNode(ctx, address), c)
 		if err != nil {
-			if errors.Is(err, io.EOF) || talosclient.StatusCode(err) == codes.Canceled {
-				break
-			}
+			r.Log.Info("could not check for etcd data on node", "address", address, "error", err.Error())
 
-			return err
+			continue
 		}
 
-		// if the directory exists at least on a single node it means that cluster
-		// was already bootstrapped
-		if info.Metadata.Error == "" {
+		if bootstrapped {
 			return nil
 		}
 	}
 
 	sort.Strings(addresses)
 
-	if err := c.Bootstrap(talosclient.WithNodes(ctx, addresses[0]), &machineapi.BootstrapRequest{}); err != nil {
+	if err := c.Bootstrap(talosclient.WithNode(ctx, addresses[0]), &machineapi.BootstrapRequest{}); err != nil {
 		if status.Code(err) != codes.AlreadyExists {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// hasEtcdData reports whether the node the context addresses has an etcd data directory.
+func hasEtcdData(ctx context.Context, c *talosclient.Client) (bool, error) {
+	list, err := c.LS(ctx, &machineapi.ListRequest{Root: "/var/lib/etcd/member"})
+	if err != nil {
+		return false, err
+	}
+
+	_, err = list.Recv()
+
+	switch {
+	case err == nil:
+		// any entry at all means the directory exists
+		return true, nil
+	case errors.Is(err, io.EOF) || talosclient.StatusCode(err) == codes.Canceled:
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, tcp *controlplanev1.TalosControlPlane, name string, spec *cabptv1.TalosConfigSpec) (*clusterv1.ContractVersionedObjectReference, error) {

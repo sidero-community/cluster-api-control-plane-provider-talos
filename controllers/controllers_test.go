@@ -12,7 +12,6 @@ import (
 
 	. "github.com/onsi/gomega"
 	bootstrapv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
-	"github.com/siderolabs/talos/pkg/machinery/api/common"
 	"github.com/siderolabs/talos/pkg/machinery/api/machine"
 	"github.com/siderolabs/talos/pkg/machinery/config"
 	"github.com/siderolabs/talos/pkg/machinery/config/generate/secrets"
@@ -539,9 +538,6 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 	machineService.setServiceListResponse(&machine.ServiceListResponse{
 		Messages: []*machine.ServiceList{
 			{
-				Metadata: &common.Metadata{
-					Hostname: "foo-machine1",
-				},
 				Services: []*machine.ServiceInfo{
 					{
 						Id:    "etcd",
@@ -567,9 +563,6 @@ func (suite *ControllersSuite) TestReconcileInitializeControlPlane() {
 	machineService.setEtcdMembersResponse(&machine.EtcdMemberListResponse{
 		Messages: []*machine.EtcdMembers{
 			{
-				Metadata: &common.Metadata{
-					Hostname: "foo-machine1",
-				},
 				Members: []*machine.EtcdMember{
 					{
 						Id:       1,
@@ -914,9 +907,6 @@ func (suite *ControllersSuite) updateEtcdMembers(fakeClient client.Client, clust
 		ms.setEtcdMembersResponse(&machine.EtcdMemberListResponse{
 			Messages: []*machine.EtcdMembers{
 				{
-					Metadata: &common.Metadata{
-						Hostname: m.Name,
-					},
 					Members: members,
 				},
 			},
@@ -969,9 +959,6 @@ func (suite *ControllersSuite) setEtcdRunning(address string) {
 		&machine.ServiceListResponse{
 			Messages: []*machine.ServiceList{
 				{
-					Metadata: &common.Metadata{
-						Hostname: address,
-					},
 					Services: []*machine.ServiceInfo{
 						{
 							Id:    "etcd",
