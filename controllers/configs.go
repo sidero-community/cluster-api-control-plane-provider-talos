@@ -7,14 +7,8 @@ package controllers
 import (
 	"context"
 	"fmt"
-	"reflect"
 
 	"github.com/pkg/errors"
-	// The legacy init-node path below reads TalosConfigStatus.TalosConfig, which exists only in
-	// v1alpha3: v1beta1 dropped it in favour of the <cluster>-talosconfig secret. Reading a
-	// v1alpha3-only field requires the v1alpha3 client, so this file pins that version
-	// deliberately while the rest of the provider uses the v1beta1 hub.
-	cabptv1alpha3 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1alpha3"
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
@@ -23,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // talosconfigForMachine will generate a talosconfig that uses *all* found addresses as the endpoints.
@@ -56,10 +49,6 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 
 	if clusterName == "" {
 		return nil, fmt.Errorf("failed to determine the cluster name of the control plane")
-	}
-
-	if !reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() {
-		return r.talosconfigFromWorkloadCluster(ctx, client.ObjectKey{Namespace: tcp.GetNamespace(), Name: clusterName}, machines...)
 	}
 
 	addrList := []string{}
@@ -95,88 +84,8 @@ func (r *TalosControlPlaneReconciler) talosconfigForMachines(ctx context.Context
 		}
 	}
 
-	// we don't need to set endpoints in general here, as endpoints were already pre-populated by the CABPT controller
-	// but we use the `machines` to _limit_ access to a specific machine in some places, and we need to be compatible
-	// with talosconfigFromWorkloadCluster which doesn't rely on Machine's Addresses
-	//
-	// once we're done with Sidero and `init` nodes, we can switch to use `WithNodes` and proper Machine IPs
-	return talosclient.New(ctx,
-		talosclient.WithDefaultGRPCDialOptions(),
-		talosclient.WithEndpoints(addrList...),
-		talosclient.WithConfig(t),
-	)
-}
-
-// talosconfigFromWorkloadCluster gets talosconfig and populates endoints using workload cluster nodes.
-func (r *TalosControlPlaneReconciler) talosconfigFromWorkloadCluster(ctx context.Context, cluster client.ObjectKey, machines ...clusterv1.Machine) (*talosclient.Client, error) {
-	if len(machines) == 0 {
-		return nil, fmt.Errorf("at least one machine should be provided")
-	}
-
-	c, err := r.ClusterCache.GetClient(ctx, cluster)
-	if err != nil {
-		return nil, err
-	}
-
-	addrList := []string{}
-
-	var t *talosconfig.Config
-
-	for _, machine := range machines {
-		if !machine.Status.NodeRef.IsDefined() {
-			return nil, fmt.Errorf("%q machine does not have a nodeRef", machine.Name)
-		}
-
-		var node corev1.Node
-
-		// grab all addresses as endpoints
-		err := c.Get(ctx, types.NamespacedName{Name: machine.Status.NodeRef.Name}, &node)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, addr := range node.Status.Addresses {
-			if addr.Type == corev1.NodeExternalIP || addr.Type == corev1.NodeInternalIP {
-				addrList = append(addrList, addr.Address)
-			}
-		}
-
-		if len(addrList) == 0 {
-			return nil, fmt.Errorf("no addresses were found for node %q", node.Name)
-		}
-
-		if t == nil {
-			var (
-				cfgs  cabptv1alpha3.TalosConfigList
-				found *cabptv1alpha3.TalosConfig
-			)
-
-			// find talosconfig in the machine's namespace
-			err = r.Client.List(ctx, &cfgs, client.InNamespace(machine.Namespace))
-			if err != nil {
-				return nil, err
-			}
-
-			for _, cfg := range cfgs.Items {
-				for _, ref := range cfg.OwnerReferences {
-					if ref.Kind == "Machine" && ref.Name == machine.Name {
-						found = &cfg
-						break
-					}
-				}
-			}
-
-			if found == nil {
-				return nil, fmt.Errorf("failed to find TalosConfig for %q", machine.Name)
-			}
-
-			t, err = talosconfig.FromString(found.Status.TalosConfig)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
+	// Endpoints were pre-populated by the CABPT controller; the given machines only narrow the
+	// request down to specific nodes.
 	return talosclient.New(ctx,
 		talosclient.WithDefaultGRPCDialOptions(),
 		talosclient.WithEndpoints(addrList...),

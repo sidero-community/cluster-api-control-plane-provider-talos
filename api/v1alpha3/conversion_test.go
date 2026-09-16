@@ -97,7 +97,6 @@ func TestTalosControlPlaneRoundTripPreservesImageFactory(t *testing.T) {
 		Spec: cpv1beta1.TalosControlPlaneSpec{
 			Version: "v1.34.0",
 			ControlPlaneConfig: cpv1beta1.ControlPlaneConfig{
-				InitConfig:         cabptv1beta1.TalosConfigSpec{GenerateType: "init", TalosVersion: "v1.14", ImageFactory: block("siderolabs/nvme-cli")},
 				ControlPlaneConfig: cabptv1beta1.TalosConfigSpec{GenerateType: "controlplane", TalosVersion: "v1.14", ImageFactory: block("siderolabs/intel-ucode")},
 			},
 		},
@@ -111,6 +110,29 @@ func TestTalosControlPlaneRoundTripPreservesImageFactory(t *testing.T) {
 	restored := &cpv1beta1.TalosControlPlane{}
 	require.NoError(t, spoke.ConvertTo(restored))
 
-	require.Equal(t, hub.Spec.ControlPlaneConfig.InitConfig.ImageFactory, restored.Spec.ControlPlaneConfig.InitConfig.ImageFactory)
 	require.Equal(t, hub.Spec.ControlPlaneConfig.ControlPlaneConfig.ImageFactory, restored.Spec.ControlPlaneConfig.ControlPlaneConfig.ImageFactory)
+}
+
+// v1alpha3 still carries `init`; the hub does not, so it is dropped on the way up and restored
+// from the stash on the way back down.
+func TestInitConfigDoesNotReachTheHub(t *testing.T) {
+	t.Parallel()
+
+	spoke := &TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{Name: "cp", Namespace: "default"},
+		Spec: TalosControlPlaneSpec{
+			ControlPlaneConfig: ControlPlaneConfig{
+				InitConfig:         cabptv1alpha3.TalosConfigSpec{GenerateType: "init"},
+				ControlPlaneConfig: cabptv1alpha3.TalosConfigSpec{GenerateType: "controlplane"},
+			},
+		},
+	}
+
+	hub := &cpv1beta1.TalosControlPlane{}
+	require.NoError(t, spoke.ConvertTo(hub))
+	require.Equal(t, "controlplane", hub.Spec.ControlPlaneConfig.ControlPlaneConfig.GenerateType)
+
+	back := &TalosControlPlane{}
+	require.NoError(t, back.ConvertFrom(hub))
+	require.Empty(t, back.Spec.ControlPlaneConfig.InitConfig.GenerateType, "nothing restores init from a hub object that never had it")
 }

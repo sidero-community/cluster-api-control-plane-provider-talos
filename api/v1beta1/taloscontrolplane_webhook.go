@@ -140,7 +140,6 @@ func (r *TalosControlPlane) validate() field.ErrorList {
 func validateControlPlaneConfig(cfg *ControlPlaneConfig, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 
-	allErrs = append(allErrs, cabptv1.ValidateImageFactory(fldPath.Child("init", "imageFactory"), cfg.InitConfig.ImageFactory)...)
 	allErrs = append(allErrs, cabptv1.ValidateImageFactory(fldPath.Child("controlplane", "imageFactory"), cfg.ControlPlaneConfig.ImageFactory)...)
 
 	return allErrs

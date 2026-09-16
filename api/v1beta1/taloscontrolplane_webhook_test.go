@@ -509,13 +509,12 @@ func TestTalosControlPlaneValidateCreateChecksImageFactory(t *testing.T) {
 
 	bad := validTalosControlPlane()
 	bad.Spec.ControlPlaneConfig.ControlPlaneConfig.ImageFactory = &cabptv1.ImageFactorySpec{Bootloader: "uboot"}
-	bad.Spec.ControlPlaneConfig.InitConfig.ImageFactory = &cabptv1.ImageFactorySpec{Extensions: []string{""}}
 
 	_, err := bad.ValidateCreate(context.Background(), bad)
 	if err == nil {
-		t.Fatal("expected validation errors for the imageFactory blocks")
+		t.Fatal("expected validation errors for the imageFactory block")
 	}
-	for _, want := range []string{"spec.controlPlaneConfig.controlplane.imageFactory.bootloader", "spec.controlPlaneConfig.init.imageFactory.extensions[0]"} {
+	for _, want := range []string{"spec.controlPlaneConfig.controlplane.imageFactory.bootloader"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should name %s, got %v", want, err)
 		}

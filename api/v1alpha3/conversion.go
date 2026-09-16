@@ -73,9 +73,8 @@ func (src *TalosControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 	// Recover hub-only fields preserved via the data annotation.
 	if ok {
 		dst.Spec.MachineNamingStrategy = restored.Spec.MachineNamingStrategy
-		// The bootstrap provider's v1alpha3 spec has no imageFactory, so both embedded blocks
-		// only survive a round trip through the stash.
-		dst.Spec.ControlPlaneConfig.InitConfig.ImageFactory = restored.Spec.ControlPlaneConfig.InitConfig.ImageFactory
+		// The bootstrap provider's v1alpha3 spec has no imageFactory, so the embedded block
+		// only survives a round trip through the stash.
 		dst.Spec.ControlPlaneConfig.ControlPlaneConfig.ImageFactory = restored.Spec.ControlPlaneConfig.ControlPlaneConfig.ImageFactory
 		dst.Spec.MachineTemplate.ObjectMeta = restored.Spec.MachineTemplate.ObjectMeta
 		dst.Spec.MachineTemplate.Spec.ReadinessGates = restored.Spec.MachineTemplate.Spec.ReadinessGates
@@ -310,4 +309,10 @@ func convertToObjectReference(ref *clusterv1.ContractVersionedObjectReference, n
 		Namespace:  namespace,
 		Name:       ref.Name,
 	}, nil
+}
+
+// Convert_v1alpha3_ControlPlaneConfig_To_v1beta1_ControlPlaneConfig drops `init`, which the hub
+// no longer has; the provider has bootstrapped through the Cluster API Bootstrap call since v0.4.0.
+func Convert_v1alpha3_ControlPlaneConfig_To_v1beta1_ControlPlaneConfig(in *ControlPlaneConfig, out *cpv1beta1.ControlPlaneConfig, s apimachineryconversion.Scope) error {
+	return Convert_v1alpha3_TalosConfigSpec_To_v1beta1_TalosConfigSpec(&in.ControlPlaneConfig, &out.ControlPlaneConfig, s)
 }

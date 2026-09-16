@@ -21,8 +21,6 @@ const (
 )
 
 type ControlPlaneConfig struct {
-	// Deprecated: starting from cacppt v0.4.0 provider doesn't use init configs.
-	InitConfig         cabptv1.TalosConfigSpec `json:"init,omitempty"`
 	ControlPlaneConfig cabptv1.TalosConfigSpec `json:"controlplane"`
 }
 

@@ -412,7 +412,7 @@ func (r *TalosControlPlaneReconciler) getFailureDomain(_ context.Context, cluste
 	return retList
 }
 
-func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, first bool) (ctrl.Result, error) {
+func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane) (ctrl.Result, error) {
 	// Since the cloned resource should eventually have a controller ref for the Machine, we create an
 	// OwnerReference here without the Controller field set
 	infraCloneOwner := &metav1.OwnerReference{
@@ -484,9 +484,6 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	}
 
 	bootstrapConfig := &tcp.Spec.ControlPlaneConfig.ControlPlaneConfig
-	if !reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() && first {
-		bootstrapConfig = &tcp.Spec.ControlPlaneConfig.InitConfig
-	}
 
 	// Clone the bootstrap configuration
 	bootstrapRef, err := r.generateTalosConfig(ctx, tcp, machineName, bootstrapConfig)
@@ -1085,7 +1082,7 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 		// Create new Machine w/ init
 		logger.Info("initializing control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-		return r.bootControlPlane(ctx, cluster, tcp, true)
+		return r.bootControlPlane(ctx, cluster, tcp)
 	// We are scaling up
 	case numMachines < desiredReplicas && numMachines > 0:
 		return r.scaleUpControlPlane(ctx, cluster, tcp, controlPlane)
@@ -1102,15 +1099,6 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 
 		return res, err
 	default:
-		if !reflect.ValueOf(tcp.Spec.ControlPlaneConfig.InitConfig).IsZero() {
-			tcp.Status.Bootstrapped = true
-			conditions.Set(tcp, metav1.Condition{
-				Type:   string(controlplanev1.MachinesBootstrapped),
-				Status: metav1.ConditionTrue,
-				Reason: controlplanev1.MachinesBootstrappedReason,
-			})
-		}
-
 		if !tcp.Status.Bootstrapped {
 			if err := r.bootstrapCluster(ctx, tcp, machines.Items); err != nil {
 				conditions.Set(tcp, metav1.Condition{
