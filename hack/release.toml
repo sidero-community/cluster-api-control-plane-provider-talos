@@ -23,6 +23,15 @@ Kubernetes 1.37 for management and workload clusters. Kubernetes 1.37 workload
 clusters need CAPI core v1.14.1 or later on the management cluster.
 """
 
+[notes.api]
+    title = "API"
+        description = """\
+`spec.controlPlaneConfig.init` and the init-node bootstrap path are removed; clusters have
+bootstrapped through the Cluster API Bootstrap call since v0.4.0. `status.deprecated.v1beta1`
+is removed; only the v1beta2 conditions, initialization and replica counters remain. v1alpha3
+clients see the legacy fields derived from them.
+"""
+
 [notes.talos]
     title = "Talos Linux"
         description = """\

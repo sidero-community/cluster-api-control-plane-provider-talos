@@ -38,6 +38,10 @@ This provider's versions are compatible with the following versions of Cluster A
 The `v0.6.x` and `v0.7.x` release series target the Cluster API `v1beta2` contract (CAPI core `v1.12+`; `v0.7.x` is built against `v1.14.2`, which adds Kubernetes 1.37 for management and workload clusters).
 Released `v0.5.x` artifacts remain on `v1beta1`; `config/metadata/metadata.yaml` advertises the `v0.6` series as `v1beta2`.
 
+The `v0.7.x` series drops `spec.controlPlaneConfig.init` (deprecated since v0.4.0) and the
+`status.deprecated.v1beta1` block; v1alpha3 clients still see the old-shape status, derived from
+the v1beta2 fields.
+
 This provider's versions are able to install and manage the following versions of Kubernetes:
 
 |                                              | v1.16 | v1.17 | v1.18 | v1.19 | v1.20 | v1.21 | v1.22 | v1.23 | v1.24 | v1.25 | v1.26 | v1.27 | v1.28 | v1.29 | v1.30 | v1.31 | v1.32 | v1.33 | v1.34 | v1.35 | v1.36 | v1.37 |
@@ -181,7 +185,7 @@ This can be done by setting `controlPlaneConfig.controlplane.generateType` to `n
 This config file can be generated with `talosctl gen config` and then edited to supply the various options you may desire.
 When you provide `data` this way, the bootstrap provider uses the supplied Talos machine configuration as-is instead of generating one for you.
 
-Both `controlPlaneConfig.init` and `controlPlaneConfig.controlplane` accept every field of the bootstrap provider's `TalosConfigSpec`, including `imageFactory`: the Talos Image Factory schematic (extensions, extra kernel arguments, overlay, bootloader) the control plane machines install and upgrade with. The bootstrap provider registers the schematic and renders `machine.install.image` from it; see its README for the field reference. Changing the block rolls the control plane like any other `controlPlaneConfig` change.
+`controlPlaneConfig.controlplane` accepts every field of the bootstrap provider's `TalosConfigSpec`, including `imageFactory`: the Talos Image Factory schematic (extensions, extra kernel arguments, overlay, bootloader) the control plane machines install and upgrade with. The bootstrap provider registers the schematic and renders the installer image from it (an `UnattendedInstallConfig` document from Talos 1.14, `machine.install.image` before); see its README for the field reference. Changing the block rolls the control plane like any other `controlPlaneConfig` change.
 
 An example of a more complex config:
 
