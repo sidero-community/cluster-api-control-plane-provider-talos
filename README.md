@@ -323,7 +323,6 @@ Flags:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--enable-machine-pre-terminate-hook` | `true` | Whether new and adopted control plane machines get the hook. This gates **stamping only** — machines that already carry the hook are always served, so turning it off can never wedge a deletion in progress. |
 | `--etcd-cleanup-timeout` | `2m` | How long etcd member removal is retried before the provider gives up. |
 
 The timeout fails open. If neither the graceful leave nor the removal through a peer succeeds

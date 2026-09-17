@@ -298,14 +298,13 @@ func newPreTerminateFixtureWithTCP(t *testing.T, tcp *controlplanev1.TalosContro
 
 	return &preTerminateFixture{
 		r: &TalosControlPlaneReconciler{
-			Client:                        cl,
-			APIReader:                     cl,
-			Log:                           ctrl.Log.WithName("test"),
-			Scheme:                        scheme,
-			Recorder:                      recorder,
-			EnableMachinePreTerminateHook: true,
-			EtcdCleanupTimeout:            2 * time.Minute,
-			etcdDialer:                    dialer.dial,
+			Client:             cl,
+			APIReader:          cl,
+			Log:                ctrl.Log.WithName("test"),
+			Scheme:             scheme,
+			Recorder:           recorder,
+			EtcdCleanupTimeout: 2 * time.Minute,
+			etcdDialer:         dialer.dial,
 		},
 		cluster:  cluster,
 		tcp:      tcp,
@@ -358,20 +357,13 @@ func runningEtcd() []talosclient.ServiceInfo {
 
 // --- 1H.1: stamping --------------------------------------------------------
 
-func TestDesiredMachineAnnotations_StampsHookWhenEnabled(t *testing.T) {
+func TestDesiredMachineAnnotations_AlwaysStampsHook(t *testing.T) {
 	f := newPreTerminateFixture(t)
 
 	annotations := f.r.desiredMachineAnnotations(f.tcp)
 
 	assert.Contains(t, annotations, PreTerminateHookCleanupAnnotation)
 	assert.Equal(t, "", annotations[PreTerminateHookCleanupAnnotation])
-}
-
-func TestDesiredMachineAnnotations_NoStampWhenDisabled(t *testing.T) {
-	f := newPreTerminateFixture(t)
-	f.r.EnableMachinePreTerminateHook = false
-
-	assert.NotContains(t, f.r.desiredMachineAnnotations(f.tcp), PreTerminateHookCleanupAnnotation)
 }
 
 func TestDesiredMachineAnnotations_KeepsTemplateAnnotations(t *testing.T) {
@@ -393,16 +385,6 @@ func TestPreTerminateHook_StampsAdoptedMachines(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, f.hasHook(t, "adopted"))
-}
-
-func TestPreTerminateHook_NoStampWhenFlagOff(t *testing.T) {
-	f := newPreTerminateFixture(t, newPTMachine(newPreTerminateTCP(), "cp-1"))
-	f.r.EnableMachinePreTerminateHook = false
-
-	_, err := f.run(context.Background())
-	require.NoError(t, err)
-
-	assert.False(t, f.hasHook(t, "cp-1"))
 }
 
 func TestPreTerminateHook_NoStampOnDeletingMachine(t *testing.T) {

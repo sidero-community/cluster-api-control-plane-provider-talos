@@ -69,11 +69,6 @@ type TalosControlPlaneReconciler struct {
 	// feature gate is enabled, and in-place updates are skipped when it is.
 	RuntimeClient runtimeclient.Caller
 
-	// EnableMachinePreTerminateHook controls whether new and adopted control plane Machines get
-	// the pre-terminate etcd cleanup hook. It gates stamping only: the handler always serves
-	// Machines that are already stamped, so turning this off can never wedge a deletion.
-	EnableMachinePreTerminateHook bool
-
 	// EtcdCleanupTimeout is how long the pre-terminate hook keeps retrying etcd member removal
 	// before it fails open and releases the hook anyway. Zero means defaultEtcdCleanupTimeout.
 	EtcdCleanupTimeout time.Duration

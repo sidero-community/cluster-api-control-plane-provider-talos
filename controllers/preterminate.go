@@ -76,14 +76,11 @@ func (r *TalosControlPlaneReconciler) etcdCleanupTimeout() time.Duration {
 // TalosControlPlane should carry at creation time.
 func (r *TalosControlPlaneReconciler) desiredMachineAnnotations(tcp *controlplanev1.TalosControlPlane) map[string]string {
 	annotations := copyStringMap(tcp.Spec.MachineTemplate.ObjectMeta.Annotations)
-
-	if r.EnableMachinePreTerminateHook {
-		if annotations == nil {
-			annotations = map[string]string{}
-		}
-
-		annotations[PreTerminateHookCleanupAnnotation] = ""
+	if annotations == nil {
+		annotations = map[string]string{}
 	}
+
+	annotations[PreTerminateHookCleanupAnnotation] = ""
 
 	return annotations
 }
@@ -321,10 +318,6 @@ func (r *TalosControlPlaneReconciler) releasePreTerminateHook(ctx context.Contex
 // races the phase gate — the Machine may be past the pre-terminate phase already — and buys
 // nothing, since the etcd member of a machine that far along is auditEtcd's problem.
 func (r *TalosControlPlaneReconciler) stampPreTerminateHooks(ctx context.Context, owned []*clusterv1.Machine) error {
-	if !r.EnableMachinePreTerminateHook {
-		return nil
-	}
-
 	var errs []error
 
 	for _, machine := range owned {
