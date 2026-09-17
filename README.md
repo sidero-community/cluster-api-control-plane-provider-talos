@@ -295,29 +295,63 @@ That sample assumes the referenced infrastructure and worker bootstrap templates
 
 ### Machine deletion and etcd
 
-Every control plane `Machine` this provider owns is created with the Cluster API pre-terminate
-lifecycle hook `pre-terminate.delete.hook.machine.cluster.x-k8s.io/tcp-cleanup`. Machines that
-predate the hook are adopted on the next reconcile — with one deliberate exception: a Machine that
-is *already* being deleted is never stamped, because it may have moved past the pre-terminate phase
-already. Those take the older path, where the provider's own scale-down removes the etcd member
-before requesting the deletion. So during an upgrade, control plane Machines already in flight
-finish the old way and everything after them is covered by the hook.
+Control plane `Machine` deletion follows the Kubeadm Control Plane provider's pattern, on every
+deletion path — a scale-down, a rollout, a `MachineHealthCheck` remediation, or a plain
+`kubectl delete machine`:
 
-While that annotation is present, the core Machine controller holds the `Machine` at the
-pre-terminate phase — after the node has been drained and its volumes detached, and before the
-infrastructure provider is allowed to delete the `InfraMachine`. That is where this provider
-resolves etcd membership: it verifies through a healthy peer that the machine is still a member,
-asks the machine itself to forfeit leadership and leave, falls back to removing the member
-through the peer when the machine is already gone, and only then releases the hook.
+1. **Interception.** Every control plane `Machine` this provider owns carries the Cluster API
+   pre-terminate lifecycle hook `pre-terminate.delete.hook.machine.cluster.x-k8s.io/tcp-cleanup`
+   from the moment it is created. Machines that predate the hook are adopted on the next
+   reconcile — with one exception: a `Machine` that is *already* being deleted is never stamped,
+   because it may have moved past the pre-terminate phase already. While the annotation is
+   present, the core Machine controller holds the `Machine` after the node has been drained and
+   its volumes detached, and before the infrastructure provider is allowed to delete the
+   `InfraMachine`.
+2. **etcd member removal.** At that point the provider verifies through a healthy peer that the
+   machine is still a member, checks that removing it leaves etcd with a healthy majority (see
+   the quorum safeguard below), asks the machine itself to forfeit leadership and leave, and
+   falls back to removing the member through the peer when the machine is already gone.
+3. **Infrastructure teardown.** Releasing the hook is all the provider does to let the deletion
+   continue. It never removes a member ahead of the deletion request and never deletes workload
+   `Node` objects: the core Machine controller deletes the `Node` once the infrastructure is gone.
+   A scale-down therefore consists of picking the machine and deleting it, exactly like a manual
+   deletion.
+4. **Self-healing.** Deleting machines still count as replicas, so nothing is created while a
+   deletion is in flight. Once the `Machine` is gone the provider creates a replacement — after
+   the preflight checks below pass.
 
 The guarantee is that **etcd membership is resolved before any infrastructure provider powers off
-or reprovisions the node, on every deletion path** — a scale-down, a rollout, a
-`MachineHealthCheck` remediation, or a plain `kubectl delete machine`. Previously only the
-provider's own scale-down removed the member, and every other path left an orphan behind for the
-periodic etcd audit to find.
+or reprovisions the node, on every deletion path**, and that no deletion or replacement ever
+starts while the control plane cannot take it.
 
 Whole-cluster and whole-control-plane teardown skip the etcd work entirely and release the hook
 immediately: during a full teardown there is no quorum left to hand membership to.
+
+#### Preflight checks
+
+Like KCP, the provider runs preflight checks before creating or deleting a control plane
+`Machine`. A scale operation waits while:
+
+- any control plane `Machine` is being deleted (one membership change at a time),
+- any `Machine` has no `Node` yet,
+- a control plane component reports an unhealthy service, or
+- the `EtcdClusterHealthy` condition is not `True`.
+
+The machine a scale-down is about to delete is exempt from the per-machine checks, so a rollout
+can still replace a broken machine. While the checks fail, the `Resized` condition carries the
+reason (for example `Scaling up control plane to 3 replicas (actual 2): waiting for machines to
+be deleted: cp-2`), a `ControlPlaneUnhealthy` warning event is recorded on the
+`TalosControlPlane`, and the operation is retried after 10 seconds.
+
+#### Quorum safeguard
+
+Before a member leaves, the provider counts the remaining machines whose etcd reports healthy —
+every owned machine but the one being deleted, including machines that are themselves deleting
+while their etcd still runs — against the majority the cluster needs once the member is gone
+(`(members - 1) / 2 + 1`). An unreachable machine counts as unhealthy. If that majority would not
+survive, the deletion is **held**: the hook stays, an `EtcdQuorumAtRisk` warning event is recorded
+on the `Machine`, and the check is retried until the other members recover. Unlike the failures
+below, this hold never times out; losing quorum is worse than a parked deletion.
 
 Flags:
 
@@ -328,10 +362,12 @@ Flags:
 The timeout fails open. If neither the graceful leave nor the removal through a peer succeeds
 before it expires, the provider emits an `EtcdCleanupOrphaned` warning event on the `Machine` and
 releases the hook anyway, so a deletion is never parked forever; the leftover member is collected
-by the periodic etcd audit once the cluster is stable again. The other outcomes are reported as
-`EtcdMemberLeft`, `EtcdMemberRemovedViaPeer` and `EtcdCleanupSkipped` events.
+by the periodic etcd audit once the cluster is stable again. The clock only measures time spent
+actually trying to remove the member: a quorum hold resets it. The other outcomes are reported
+as `EtcdMemberLeft`, `EtcdMemberRemovedViaPeer` and `EtcdCleanupSkipped` events.
 
-The escape hatch, if you need a `Machine` to finish deleting right now:
+The escape hatch, if you need a `Machine` to finish deleting right now — including out of a
+quorum hold:
 
 ```bash
 kubectl annotate machine <name> pre-terminate.delete.hook.machine.cluster.x-k8s.io/tcp-cleanup-
@@ -348,3 +384,4 @@ The reason is that a reset hook takes the node down for good, so the etcd member
 before it runs — and if both hooks insisted on running last, the deletion would deadlock. So the
 ordering is: Cluster API drains the node, this provider removes the etcd member and releases its
 hook, and the reset hook then runs on a node that is no longer part of the etcd cluster.
+

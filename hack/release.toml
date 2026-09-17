@@ -6,7 +6,7 @@ github_repo = "talos-systems/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
 # previous release
-previous = "v0.7.1"
+previous = "v0.8.0"
 
 pre_release = false
 
@@ -15,25 +15,23 @@ preface = """\
 
 [notes]
 
-[notes.capi]
-    title = "Cluster API"
+[notes.lifecycle]
+    title = "Machine lifecycle"
         description = """\
-CACPPT is now built against CAPI v1.14 (v1beta2 contract, unchanged), which adds
-Kubernetes 1.37 for management and workload clusters. Kubernetes 1.37 workload
-clusters need CAPI core v1.14.1 or later on the management cluster.
+Control plane Machine deletion now follows the Kubeadm Control Plane provider end to end.
+Scale-down only deletes the Machine: the etcd member leaves at the pre-terminate phase and the
+core Machine controller deletes the Node, so the provider no longer removes members inline or
+deletes workload Node objects. Scale-up and scale-down run KCP-style preflight checks first
+(no deletion in flight, every machine with a Node, components and etcd healthy; the scale-down
+victim is exempt) and report `ControlPlaneUnhealthy` events while they wait. The pre-terminate
+hook refuses to remove a member when the remaining healthy members would fall below quorum,
+holding the deletion with an `EtcdQuorumAtRisk` event instead of failing open. Deleting
+machines are excluded from the control plane health checks.
 """
 
-[notes.api]
-    title = "API"
+[notes.flags]
+    title = "Flags"
         description = """\
-`spec.controlPlaneConfig.init` and the init-node bootstrap path are removed; clusters have
-bootstrapped through the Cluster API Bootstrap call since v0.4.0. `status.deprecated.v1beta1`
-is removed; only the v1beta2 conditions, initialization and replica counters remain. v1alpha3
-clients see the legacy fields derived from them.
-"""
-
-[notes.talos]
-    title = "Talos Linux"
-        description = """\
-CACPPT updated for Talos 1.14: built against machinery v1.14.0 and tested with Talos v1.14.0.
+`--enable-machine-pre-terminate-hook` is removed: the hook is always on, as in KCP, and the
+legacy inline etcd-leave path it guarded is gone. `--etcd-cleanup-timeout` is unchanged.
 """
