@@ -27,12 +27,19 @@ const etcdLeavingAnnotation = "controlplane.cluster.x-k8s.io/etcd-leaving"
 func (r *TalosControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, controlPlane *ControlPlane) (ctrl.Result, error) {
 	numMachines := len(controlPlane.Machines)
 	desiredReplicas := tcp.Spec.GetReplicas()
+	summary := fmt.Sprintf("Scaling up control plane to %d replicas (actual %d)", desiredReplicas, numMachines)
+
+	// A replacement joins an etcd cluster that has to be able to take it: no deletion still in
+	// flight, every existing machine with a node, components and etcd healthy. Like KCP.
+	if failure := r.preflightChecks(ctx, tcp, controlPlane.Machines); failure != nil {
+		return r.holdScaleOperation(tcp, controlplanev1.ScalingUpReason, summary, failure), nil
+	}
 
 	conditions.Set(tcp, metav1.Condition{
 		Type:    string(controlplanev1.ResizedCondition),
 		Status:  metav1.ConditionFalse,
 		Reason:  controlplanev1.ScalingUpReason,
-		Message: fmt.Sprintf("Scaling up control plane to %d replicas (actual %d)", desiredReplicas, numMachines),
+		Message: summary,
 	})
 
 	// Create a new Machine w/ join
