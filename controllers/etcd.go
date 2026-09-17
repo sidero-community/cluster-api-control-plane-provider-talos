@@ -102,41 +102,6 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 	return nil
 }
 
-// gracefulEtcdLeave removes a given machine from the etcd cluster by forfeiting leadership
-// and issuing a "leave" request from the machine itself.
-func (r *TalosControlPlaneReconciler) gracefulEtcdLeave(ctx context.Context, c etcdCalls, machineToLeave clusterv1.Machine) error {
-	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
-
-	defer cancel()
-
-	r.Log.Info("verifying etcd status", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
-
-	svcs, err := c.ServiceInfo(ctx, "etcd")
-	if err != nil {
-		return err
-	}
-
-	for _, svc := range svcs {
-		if svc.Service.State != "Finished" {
-			r.Log.Info("forfeiting leadership", "machine", machineToLeave.Status.NodeRef.Name)
-
-			_, err = c.EtcdForfeitLeadership(ctx, &machineapi.EtcdForfeitLeadershipRequest{})
-			if err != nil {
-				return err
-			}
-
-			r.Log.Info("leaving etcd", "machine", machineToLeave.Name, "node", machineToLeave.Status.NodeRef.Name)
-
-			err = c.EtcdLeaveCluster(ctx, &machineapi.EtcdLeaveClusterRequest{})
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
 // forceEtcdLeave removes a given machine from the etcd cluster by telling another CP node to remove the member.
 // This is used in times when the machine was deleted out from under us.
 func (r *TalosControlPlaneReconciler) forceEtcdLeave(ctx context.Context, c etcdCalls, member *machineapi.EtcdMember) error {

@@ -38,7 +38,7 @@ func (r *TalosControlPlaneReconciler) upgradeControlPlane(
 			return r.scaleUpControlPlane(ctx, cluster, tcp, controlPlane)
 		}
 
-		return r.scaleDownControlPlane(ctx, cluster, tcp, controlPlane, machinesRequireUpgrade)
+		return r.scaleDownControlPlane(ctx, tcp, controlPlane, machinesRequireUpgrade)
 	case controlplanev1.OnDeleteStrategyType:
 		// nothing to do, scale up handler will take care of creating machines with the new spec
 		return ctrl.Result{}, nil

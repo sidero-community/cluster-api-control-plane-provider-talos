@@ -1072,7 +1072,7 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 		return r.scaleUpControlPlane(ctx, cluster, tcp, controlPlane)
 	// We are scaling down
 	case numMachines > desiredReplicas:
-		res, err = r.scaleDownControlPlane(ctx, cluster, tcp, controlPlane, collections.Machines{})
+		res, err = r.scaleDownControlPlane(ctx, tcp, controlPlane, collections.Machines{})
 		if err != nil {
 			if res.RequeueAfter > 0 {
 				logger.Info("failed to scale down control plane", "error", err)
