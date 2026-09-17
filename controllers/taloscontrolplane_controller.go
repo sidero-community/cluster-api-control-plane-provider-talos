@@ -887,10 +887,11 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, 
 }
 
 func (r *TalosControlPlaneReconciler) reconcileNodeHealth(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (result ctrl.Result, err error) {
-	if err := r.nodesHealthcheck(ctx, tcp, machines.Items); err != nil {
+	if err := r.nodesHealthcheck(ctx, tcp, healthCheckable(machines.Items)); err != nil {
 		reason := controlplanev1.ControlPlaneComponentsInspectionFailedReason
 
-		if errors.Is(err, &errServiceUnhealthy{}) {
+		var unhealthy *errServiceUnhealthy
+		if errors.As(err, &unhealthy) {
 			reason = controlplanev1.ControlPlaneComponentsUnhealthyReason
 		}
 

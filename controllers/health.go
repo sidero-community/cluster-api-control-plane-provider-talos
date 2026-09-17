@@ -27,13 +27,33 @@ func (e *errServiceUnhealthy) Error() string {
 	return fmt.Sprintf("Service %s is unhealthy: %s", e.service, e.reason)
 }
 
+// healthCheckable narrows machines to the ones whose services are expected to be healthy:
+// not deleting, and not marked as leaving etcd. A machine on its way out has a drained node
+// and possibly no etcd member anymore, so counting it would only make the health conditions
+// flap through every deletion.
+func healthCheckable(machines []clusterv1.Machine) []clusterv1.Machine {
+	out := make([]clusterv1.Machine, 0, len(machines))
+
+	for _, machine := range machines {
+		if !machine.DeletionTimestamp.IsZero() || machine.Annotations[etcdLeavingAnnotation] == "true" {
+			continue
+		}
+
+		out = append(out, machine)
+	}
+
+	return out
+}
+
+// nodesHealthcheck fails on the first machine reporting a service that is known to be
+// unhealthy. Callers pass the machines they expect to be healthy (see healthCheckable).
 func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines []clusterv1.Machine) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
 	for _, machine := range machines {
 		if err := func() error {
-			client, err := r.talosconfigForMachines(ctx, tcp, machine)
+			client, err := r.etcdClientFor(ctx, tcp, machine)
 			if err != nil {
 				return err
 			}

@@ -16,11 +16,12 @@ import (
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 )
 
-// etcdCalls is the subset of the Talos machine API the etcd cleanup paths use.
-// *talosclient.Client satisfies it; tests substitute a fake through
+// etcdCalls is the subset of the Talos machine API the etcd cleanup and health-check paths
+// use. *talosclient.Client satisfies it; tests substitute a fake through
 // TalosControlPlaneReconciler.etcdDialer.
 type etcdCalls interface {
 	ServiceInfo(ctx context.Context, id string, callOptions ...grpc.CallOption) ([]talosclient.ServiceInfo, error)
+	ServiceList(ctx context.Context, callOptions ...grpc.CallOption) (*machineapi.ServiceListResponse, error)
 	EtcdMemberList(ctx context.Context, req *machineapi.EtcdMemberListRequest, callOptions ...grpc.CallOption) (*machineapi.EtcdMemberListResponse, error)
 	EtcdForfeitLeadership(ctx context.Context, req *machineapi.EtcdForfeitLeadershipRequest, callOptions ...grpc.CallOption) (*machineapi.EtcdForfeitLeadershipResponse, error)
 	EtcdLeaveCluster(ctx context.Context, req *machineapi.EtcdLeaveClusterRequest, callOptions ...grpc.CallOption) error

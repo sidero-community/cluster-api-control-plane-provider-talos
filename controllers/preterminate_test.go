@@ -38,16 +38,33 @@ type fakeEtcdCalls struct {
 	memberListErr  error
 	services       []talosclient.ServiceInfo
 	serviceInfoErr error
+	serviceList    *machineapi.ServiceListResponse
+	serviceListErr error
 	forfeitErr     error
 	leaveErr       error
 	removeErr      error
 
 	serviceInfoCalls int
+	serviceListCalls int
 	memberListCalls  int
 	forfeitCalls     int
 	leaveCalls       int
 	removedIDs       []uint64
 	closed           bool
+}
+
+func (f *fakeEtcdCalls) ServiceList(_ context.Context, _ ...grpc.CallOption) (*machineapi.ServiceListResponse, error) {
+	f.serviceListCalls++
+
+	if f.serviceListErr != nil {
+		return nil, f.serviceListErr
+	}
+
+	if f.serviceList == nil {
+		return &machineapi.ServiceListResponse{}, nil
+	}
+
+	return f.serviceList, nil
 }
 
 func (f *fakeEtcdCalls) ServiceInfo(_ context.Context, _ string, _ ...grpc.CallOption) ([]talosclient.ServiceInfo, error) {
@@ -147,7 +164,7 @@ func (d *fakeEtcdDialer) totalEtcdCalls() int {
 	total := 0
 
 	for _, c := range d.clients {
-		total += c.serviceInfoCalls + c.memberListCalls + c.forfeitCalls + c.leaveCalls + len(c.removedIDs)
+		total += c.serviceInfoCalls + c.serviceListCalls + c.memberListCalls + c.forfeitCalls + c.leaveCalls + len(c.removedIDs)
 	}
 
 	return total
@@ -353,6 +370,22 @@ func runningEtcd() []talosclient.ServiceInfo {
 	return []talosclient.ServiceInfo{
 		{Service: &machineapi.ServiceInfo{Id: "etcd", State: "Running"}},
 	}
+}
+
+// healthyServices is what a control plane node with every service healthy reports.
+func healthyServices() *machineapi.ServiceListResponse {
+	return &machineapi.ServiceListResponse{Messages: []*machineapi.ServiceList{{Services: []*machineapi.ServiceInfo{
+		{Id: "etcd", State: "Running", Health: &machineapi.ServiceHealth{Healthy: true}},
+		{Id: "kubelet", State: "Running", Health: &machineapi.ServiceHealth{Healthy: true}},
+	}}}}
+}
+
+// unhealthyServices is what a control plane node with a failed kubelet reports.
+func unhealthyServices() *machineapi.ServiceListResponse {
+	return &machineapi.ServiceListResponse{Messages: []*machineapi.ServiceList{{Services: []*machineapi.ServiceInfo{
+		{Id: "etcd", State: "Running", Health: &machineapi.ServiceHealth{Healthy: true}},
+		{Id: "kubelet", State: "Failed", Health: &machineapi.ServiceHealth{Healthy: false}},
+	}}}}
 }
 
 // --- 1H.1: stamping --------------------------------------------------------

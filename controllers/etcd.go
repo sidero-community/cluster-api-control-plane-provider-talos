@@ -20,14 +20,7 @@ func (r *TalosControlPlaneReconciler) etcdHealthcheck(ctx context.Context, tcp *
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
 
-	machines := []clusterv1.Machine{}
-
-	for _, machine := range ownedMachines {
-		if machine.ObjectMeta.DeletionTimestamp.IsZero() &&
-			machine.Annotations[etcdLeavingAnnotation] != "true" {
-			machines = append(machines, machine)
-		}
-	}
+	machines := healthCheckable(ownedMachines)
 
 	params := make([]any, 0, len(machines)*2)
 	for _, machine := range machines {
