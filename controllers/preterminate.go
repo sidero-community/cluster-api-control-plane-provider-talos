@@ -61,6 +61,7 @@ const (
 	etcdMemberRemovedViaPeerEvent = "EtcdMemberRemovedViaPeer"
 	etcdCleanupSkippedEvent       = "EtcdCleanupSkipped"
 	etcdCleanupOrphanedEvent      = "EtcdCleanupOrphaned"
+	etcdQuorumAtRiskEvent         = "EtcdQuorumAtRisk"
 )
 
 // etcdCleanupTimeout is the fail-open deadline for the pre-terminate handler.
@@ -223,14 +224,26 @@ func (r *TalosControlPlaneReconciler) reconcilePreTerminateHookForMachine(
 
 	defer peerClient.Close() //nolint:errcheck
 
-	member, err := findEtcdMember(ctx, peerClient, victim)
+	members, err := listEtcdMembers(ctx, peerClient)
 	if err != nil {
 		return r.failOpenOrRetry(ctx, victim, errors.Wrapf(err, "failed to list etcd members via machine %q", peer.Name))
+	}
+
+	member, err := matchEtcdMember(members, victim)
+	if err != nil {
+		return r.failOpenOrRetry(ctx, victim, err)
 	}
 
 	if member == nil {
 		return r.releasePreTerminateHookWithEvent(ctx, victim, corev1.EventTypeNormal, etcdCleanupSkippedEvent,
 			"machine is no longer an etcd member, skipping etcd member removal")
+	}
+
+	// Safeguard, as in KCP: the member only leaves if a healthy majority of what remains can
+	// keep the cluster serving. Losing quorum is worse than a parked deletion, so unlike the
+	// connectivity failures below this hold never fails open.
+	if shortfall := r.quorumAfterRemoval(ctx, tcp, owned, victim, len(members)); shortfall != nil {
+		return r.holdForQuorum(ctx, victim, member, shortfall)
 	}
 
 	// Mark the machine as leaving etcd so the health check stops counting it even if this
@@ -434,14 +447,8 @@ func (r *TalosControlPlaneReconciler) etcdLeaveFromVictim(ctx context.Context, t
 	return errors.Errorf("etcd is not running on machine %q", victim.Name)
 }
 
-// findEtcdMember looks the machine up in the etcd member list reported by a peer. A nil member
-// with a nil error means the machine is not a member (anymore).
-func findEtcdMember(ctx context.Context, c etcdCalls, victim *clusterv1.Machine) (*machineapi.EtcdMember, error) {
-	hostname := machineHostName(victim)
-	if hostname == "" {
-		return nil, errors.Errorf("machine %q has no hostname to match against the etcd member list", victim.Name)
-	}
-
+// listEtcdMembers returns the etcd member list as reported by the machine the client points at.
+func listEtcdMembers(ctx context.Context, c etcdCalls) ([]*machineapi.EtcdMember, error) {
 	ctx, cancel := context.WithTimeout(ctx, etcdCallTimeout)
 	defer cancel()
 
@@ -450,15 +457,131 @@ func findEtcdMember(ctx context.Context, c etcdCalls, victim *clusterv1.Machine)
 		return nil, err
 	}
 
+	var members []*machineapi.EtcdMember
+
 	for _, message := range response.Messages {
-		for _, member := range message.Members {
-			if strings.EqualFold(member.Hostname, hostname) {
-				return member, nil
-			}
+		members = append(members, message.Members...)
+	}
+
+	return members, nil
+}
+
+// matchEtcdMember looks the machine up in a member list. A nil member with a nil error means
+// the machine is not a member (anymore).
+func matchEtcdMember(members []*machineapi.EtcdMember, victim *clusterv1.Machine) (*machineapi.EtcdMember, error) {
+	hostname := machineHostName(victim)
+	if hostname == "" {
+		return nil, errors.Errorf("machine %q has no hostname to match against the etcd member list", victim.Name)
+	}
+
+	for _, member := range members {
+		if strings.EqualFold(member.Hostname, hostname) {
+			return member, nil
 		}
 	}
 
 	return nil, nil
+}
+
+// quorumShortfall says how far the etcd cluster would be from quorum after a removal.
+type quorumShortfall struct {
+	healthy, members, quorum int
+}
+
+// quorumAfterRemoval checks whether the etcd cluster keeps a healthy majority once the
+// victim's member is gone. Every owned machine other than the victim is a candidate voter --
+// including ones that are themselves deleting but whose etcd is still running -- except
+// machines already marked as leaving etcd. An unreachable machine counts as unhealthy.
+func (r *TalosControlPlaneReconciler) quorumAfterRemoval(
+	ctx context.Context,
+	tcp *controlplanev1.TalosControlPlane,
+	owned []*clusterv1.Machine,
+	victim *clusterv1.Machine,
+	memberCount int,
+) *quorumShortfall {
+	healthy := 0
+
+	for _, machine := range owned {
+		if machine.Name == victim.Name || machine.Annotations[etcdLeavingAnnotation] == "true" {
+			continue
+		}
+
+		if r.etcdHealthyOn(ctx, tcp, machine) {
+			healthy++
+		}
+	}
+
+	members := memberCount - 1
+	quorum := members/2 + 1
+
+	if healthy >= quorum {
+		return nil
+	}
+
+	return &quorumShortfall{healthy: healthy, members: members, quorum: quorum}
+}
+
+// etcdHealthyOn reports whether the machine's etcd service reports itself healthy.
+func (r *TalosControlPlaneReconciler) etcdHealthyOn(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine *clusterv1.Machine) bool {
+	c, err := r.etcdClientFor(ctx, tcp, *machine)
+	if err != nil {
+		r.Log.Info("could not reach machine to check etcd health", "machine", machine.Name, "error", err.Error())
+
+		return false
+	}
+
+	defer c.Close() //nolint:errcheck
+
+	ctx, cancel := context.WithTimeout(ctx, etcdCallTimeout)
+	defer cancel()
+
+	svcs, err := c.ServiceInfo(ctx, "etcd")
+	if err != nil {
+		r.Log.Info("could not check etcd health", "machine", machine.Name, "error", err.Error())
+
+		return false
+	}
+
+	for _, svc := range svcs {
+		if svc.Service.GetHealth().GetHealthy() {
+			return true
+		}
+	}
+
+	return false
+}
+
+// holdForQuorum keeps the hook, says why, and resets the fail-open clock so it only measures
+// time spent actually trying to remove the member.
+func (r *TalosControlPlaneReconciler) holdForQuorum(ctx context.Context, victim *clusterv1.Machine, member *machineapi.EtcdMember, shortfall *quorumShortfall) (ctrl.Result, error) {
+	if err := r.clearEtcdCleanupObservedAt(ctx, victim); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	message := fmt.Sprintf("removing etcd member %q would leave %d healthy members of %d, below the quorum of %d; holding the deletion",
+		member.Hostname, shortfall.healthy, shortfall.members, shortfall.quorum)
+
+	r.Log.Info(message, "machine", victim.Name)
+	r.recordMachineEvent(victim, corev1.EventTypeWarning, etcdQuorumAtRiskEvent, message)
+
+	return ctrl.Result{RequeueAfter: preTerminateRequeueAfter}, nil
+}
+
+// clearEtcdCleanupObservedAt drops the fail-open anchor, if present.
+func (r *TalosControlPlaneReconciler) clearEtcdCleanupObservedAt(ctx context.Context, machine *clusterv1.Machine) error {
+	if _, ok := machine.Annotations[etcdCleanupObservedAtAnnotation]; !ok {
+		return nil
+	}
+
+	patchHelper, err := patch.NewHelper(machine, r.Client)
+	if err != nil {
+		return err
+	}
+
+	delete(machine.Annotations, etcdCleanupObservedAtAnnotation)
+
+	return errors.Wrapf(patchHelper.Patch(ctx, machine),
+		"failed to reset the etcd cleanup deadline on machine %q", machine.Name)
 }
 
 // selectEtcdPeer picks a control plane machine that can speak for the etcd cluster on behalf of
