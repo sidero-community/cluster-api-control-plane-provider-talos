@@ -18,6 +18,32 @@ const (
 	// TalosControlPlaneFinalizerLegacy is kept temporarily so the controller can migrate
 	// existing objects away from the old non-path-qualified finalizer value.
 	TalosControlPlaneFinalizerLegacy = "talos.controlplane.cluster.x-k8s.io"
+
+	// RemediationInProgressAnnotation is set on the TalosControlPlane while a remediation is in
+	// progress: from right before the unhealthy Machine is deleted until the Machine replacing it
+	// is created. Its value is a JSON object with the name of the remediated Machine, the time of
+	// the remediation and the retry count of the remediation sequence. While it is set, no other
+	// Machine is remediated. Same key as the KubeadmControlPlane's.
+	RemediationInProgressAnnotation = "controlplane.cluster.x-k8s.io/remediation-in-progress"
+
+	// RemediationForAnnotation is set on the Machine created to replace a remediated Machine, with
+	// the value RemediationInProgressAnnotation had when it was created, so that a failure of the
+	// replacement counts as a retry of the same remediation. Same key as the KubeadmControlPlane's.
+	RemediationForAnnotation = "controlplane.cluster.x-k8s.io/remediation-for"
+)
+
+// Defaults of the remediation limits, applied by the webhook to the fields left empty. They are
+// the limits the provider applied before they became configurable.
+const (
+	// DefaultRemediationMaxRetry is the default maximum number of retries of a remediation sequence.
+	DefaultRemediationMaxRetry = int32(3)
+
+	// DefaultRemediationRetryPeriodSeconds is the default minimum time between two retries, 5 minutes.
+	DefaultRemediationRetryPeriodSeconds = int32(5 * 60)
+
+	// DefaultRemediationMinHealthyPeriodSeconds is the default time a replacement must stay healthy
+	// for its own failure to start a new remediation sequence, 1 hour.
+	DefaultRemediationMinHealthyPeriodSeconds = int32(60 * 60)
 )
 
 type ControlPlaneConfig struct {
@@ -132,6 +158,62 @@ type TalosControlPlaneSpec struct {
 	// +optional
 	// +kubebuilder:default={type: "RollingUpdate", rollingUpdate: {maxSurge: 1}}
 	RolloutStrategy *RolloutStrategy `json:"rolloutStrategy,omitempty"`
+
+	// remediation controls how unhealthy control plane Machines are remediated. A Machine that a
+	// MachineHealthCheck hands to the TalosControlPlane (HealthCheckSucceeded=False and
+	// OwnerRemediated=False) is deleted and replaced, within these limits.
+	// +optional
+	Remediation TalosControlPlaneRemediationSpec `json:"remediation,omitempty,omitzero"`
+}
+
+// TalosControlPlaneRemediationSpec configures the remediation of unhealthy control plane Machines.
+// It has the same shape as the KubeadmControlPlane's remediation spec, with finite defaults.
+type TalosControlPlaneRemediationSpec struct {
+	// maxRetry is the maximum number of retries while attempting to remediate an unhealthy machine.
+	// A retry happens when a machine that was created as a replacement for an unhealthy machine also fails.
+	// For example, given a control plane with three machines M1, M2, M3:
+	//
+	//	M1 become unhealthy; remediation happens, and M1-1 is created as a replacement.
+	//	If M1-1 (replacement of M1) has problems while bootstrapping it will become unhealthy, and then be
+	//	remediated; such operation is considered a retry, remediation-retry #1.
+	//	If M1-2 (replacement of M1-1) becomes unhealthy, remediation-retry #2 will happen, etc.
+	//
+	// A retry could happen only after retryPeriodSeconds from the previous retry.
+	// If a machine is marked as unhealthy after minHealthyPeriodSeconds from the previous remediation expired,
+	// this is not considered a retry anymore because the new issue is assumed unrelated from the previous one.
+	//
+	// Defaults to 3, so that a machine that keeps failing for the same reason, a quota or an image
+	// problem say, is not replaced forever.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxRetry *int32 `json:"maxRetry,omitempty"`
+
+	// retryPeriodSeconds is the duration, in seconds, that the TalosControlPlane waits before
+	// remediating a machine being created as a replacement for an unhealthy machine (a retry).
+	//
+	// Defaults to 300.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	RetryPeriodSeconds *int32 `json:"retryPeriodSeconds,omitempty"`
+
+	// minHealthyPeriodSeconds defines the duration, in seconds, after which the TalosControlPlane
+	// considers any failure of a machine unrelated to the previous one. In this case the remediation
+	// is not considered a retry anymore, and thus the retry counter restarts from 0. For example,
+	// assuming minHealthyPeriodSeconds is set to 1h (default)
+	//
+	//	M1 become unhealthy; remediation happens, and M1-1 is created as a replacement.
+	//	If M1-1 (replacement of M1) has problems within the 1hr after the creation, also
+	//	this machine will be remediated and this operation is considered a retry - a problem related
+	//	to the original issue happened to M1 -.
+	//
+	//	If instead the problem on M1-1 is happening after minHealthyPeriodSeconds expired, e.g. four days after
+	//	m1-1 has been created as a remediation of M1, the problem on M1-1 is considered unrelated to
+	//	the original issue happened to M1.
+	//
+	// Defaults to 3600.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MinHealthyPeriodSeconds *int32 `json:"minHealthyPeriodSeconds,omitempty"`
 }
 
 // GetReplicas reads spec replicas in a safe way.
@@ -229,6 +311,31 @@ type TalosControlPlaneStatus struct {
 	// which is required to start etcd and Kubernetes components in Talos.
 	// +optional
 	Bootstrapped bool `json:"bootstrapped,omitempty"`
+
+	// lastRemediation stores info about the last remediation performed: the one in progress, if
+	// any, or the most recent one recorded on a Machine the TalosControlPlane created.
+	// +optional
+	LastRemediation LastRemediationStatus `json:"lastRemediation,omitempty,omitzero"`
+}
+
+// LastRemediationStatus stores info about the last remediation performed by the TalosControlPlane.
+type LastRemediationStatus struct {
+	// machine is the name of the Machine remediated last.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Machine string `json:"machine,omitempty"`
+
+	// time is when the last remediation happened. It is represented in RFC3339 form and is in UTC.
+	// +required
+	Time metav1.Time `json:"time,omitempty,omitzero"`
+
+	// retryCount is the number of retries of the remediation sequence the last remediation belongs
+	// to. A retry happens when a machine that was created as a replacement for an unhealthy machine
+	// also fails.
+	// +required
+	// +kubebuilder:validation:Minimum=0
+	RetryCount *int32 `json:"retryCount,omitempty"`
 }
 
 // TalosControlPlaneInitializationStatus provides observations of the TalosControlPlane initialization process.

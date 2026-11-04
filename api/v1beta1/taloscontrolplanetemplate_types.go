@@ -49,6 +49,10 @@ type TalosControlPlaneTemplateResourceSpec struct {
 	// +optional
 	// +kubebuilder:default={type: "RollingUpdate", rollingUpdate: {maxSurge: 1}}
 	RolloutStrategy *RolloutStrategy `json:"rolloutStrategy,omitempty"`
+
+	// remediation controls how unhealthy control plane Machines are remediated.
+	// +optional
+	Remediation TalosControlPlaneRemediationSpec `json:"remediation,omitempty,omitzero"`
 }
 
 // TalosControlPlaneTemplateMachineTemplate is the MachineTemplate carried by a

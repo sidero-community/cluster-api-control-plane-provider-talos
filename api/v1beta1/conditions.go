@@ -4,6 +4,8 @@
 
 package v1beta1
 
+import clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+
 // Conditions and condition Reasons for the TalosControlPlane object.
 //
 // These constants describe the v1beta2 (metav1.Condition) shape that is the new contract
@@ -129,4 +131,39 @@ const (
 
 	// MachinesCreatedReason documents that the TalosControlPlane has successfully created all required machines.
 	MachinesCreatedReason = "MachinesCreated"
+)
+
+const (
+	// RemediatingCondition surfaces details about the ongoing remediation of the control plane Machines, if any.
+	RemediatingCondition = clusterv1.RemediatingCondition
+
+	// RemediatingReason surfaces when the TalosControlPlane has at least one Machine with HealthCheckSucceeded
+	// set to false and OwnerRemediated set to false.
+	RemediatingReason = clusterv1.RemediatingReason
+
+	// NotRemediatingReason surfaces when the TalosControlPlane has no Machine with HealthCheckSucceeded set to
+	// false and OwnerRemediated set to false.
+	NotRemediatingReason = clusterv1.NotRemediatingReason
+
+	// RemediatingInternalErrorReason surfaces unexpected failures when computing the Remediating condition.
+	RemediatingInternalErrorReason = clusterv1.InternalErrorReason
+)
+
+// Reasons of the OwnerRemediated condition of the control plane Machines; same values as the KubeadmControlPlane's.
+const (
+	// MachineRemediationInternalErrorReason surfaces unexpected failures while remediating a control plane Machine.
+	MachineRemediationInternalErrorReason = clusterv1.InternalErrorReason
+
+	// MachineCannotBeRemediatedReason surfaces when the remediation of a control plane Machine can't be started,
+	// because it could cost etcd its quorum or the retry limits are reached, say. It needs an operator.
+	MachineCannotBeRemediatedReason = "CannotBeRemediated"
+
+	// MachineRemediationDeferredReason surfaces when the remediation of a control plane Machine must be deferred,
+	// until another Machine finishes provisioning or deleting, say.
+	MachineRemediationDeferredReason = "RemediationDeferred"
+
+	// MachineRemediationMachineDeletingReason surfaces when the remediation of a control plane Machine has been
+	// completed by deleting the unhealthy Machine. A new Machine is created by the TalosControlPlane as part of the
+	// regular reconcile loop that ensures the desired number of replicas exist.
+	MachineRemediationMachineDeletingReason = "MachineDeleting"
 )

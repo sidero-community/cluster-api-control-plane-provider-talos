@@ -55,6 +55,24 @@ func defaultTalosControlPlaneSpec(s *TalosControlPlaneSpec) {
 	}
 
 	s.RolloutStrategy = defaultRolloutStrategy(s.RolloutStrategy)
+	defaultRemediation(&s.Remediation)
+}
+
+// defaultRemediation fills the remediation limits left empty with their defaults, so that the
+// limits in force are visible on the object. The controller applies the same defaults to objects
+// that never went through the webhook.
+func defaultRemediation(remediation *TalosControlPlaneRemediationSpec) {
+	if remediation.MaxRetry == nil {
+		remediation.MaxRetry = new(DefaultRemediationMaxRetry)
+	}
+
+	if remediation.RetryPeriodSeconds == nil {
+		remediation.RetryPeriodSeconds = new(DefaultRemediationRetryPeriodSeconds)
+	}
+
+	if remediation.MinHealthyPeriodSeconds == nil {
+		remediation.MinHealthyPeriodSeconds = new(DefaultRemediationMinHealthyPeriodSeconds)
+	}
 }
 
 func defaultRolloutStrategy(rolloutStrategy *RolloutStrategy) *RolloutStrategy {

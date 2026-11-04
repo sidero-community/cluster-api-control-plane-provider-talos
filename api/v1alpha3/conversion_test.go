@@ -148,7 +148,7 @@ func TestControlPlaneStatusConvertFromDerivesTheLegacyFields(t *testing.T) {
 	hub := &cpv1beta1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{Name: "cp", Namespace: "default"},
 		Status: cpv1beta1.TalosControlPlaneStatus{
-			Initialization:   cpv1beta1.TalosControlPlaneInitializationStatus{ControlPlaneInitialized: ptr.To(true)},
+			Initialization:   cpv1beta1.TalosControlPlaneInitializationStatus{ControlPlaneInitialized: new(true)},
 			Replicas:         3,
 			ReadyReplicas:    2,
 			UpToDateReplicas: ptr.To[int32](1),
@@ -166,4 +166,40 @@ func TestControlPlaneStatusConvertFromDerivesTheLegacyFields(t *testing.T) {
 	require.EqualValues(t, 1, spoke.Status.UnavailableReplicas)
 	require.Nil(t, spoke.Status.FailureReason)
 	require.Equal(t, Conditions{{Type: "Available", Status: corev1.ConditionTrue, Reason: "Available", LastTransitionTime: transition}}, spoke.Status.Conditions)
+}
+
+// spec.remediation and status.lastRemediation exist only in the hub: they ride the conversion-data
+// annotation through v1alpha3 and back.
+func TestTalosControlPlaneRoundTripPreservesRemediation(t *testing.T) {
+	t.Parallel()
+
+	remediated := metav1.NewTime(time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC))
+	hub := &cpv1beta1.TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{Name: "cp", Namespace: "default"},
+		Spec: cpv1beta1.TalosControlPlaneSpec{
+			Version: "v1.34.0",
+			ControlPlaneConfig: cpv1beta1.ControlPlaneConfig{
+				ControlPlaneConfig: cabptv1beta1.TalosConfigSpec{GenerateType: "controlplane"},
+			},
+			Remediation: cpv1beta1.TalosControlPlaneRemediationSpec{
+				MaxRetry:                ptr.To[int32](5),
+				RetryPeriodSeconds:      ptr.To[int32](60),
+				MinHealthyPeriodSeconds: ptr.To[int32](7200),
+			},
+		},
+		Status: cpv1beta1.TalosControlPlaneStatus{
+			LastRemediation: cpv1beta1.LastRemediationStatus{Machine: "cp-2", Time: remediated, RetryCount: ptr.To[int32](1)},
+		},
+	}
+
+	spoke := &TalosControlPlane{}
+	require.NoError(t, spoke.ConvertFrom(hub))
+
+	restored := &cpv1beta1.TalosControlPlane{}
+	require.NoError(t, spoke.ConvertTo(restored))
+
+	require.Equal(t, hub.Spec.Remediation, restored.Spec.Remediation)
+	require.Equal(t, hub.Status.LastRemediation.Machine, restored.Status.LastRemediation.Machine)
+	require.Equal(t, hub.Status.LastRemediation.RetryCount, restored.Status.LastRemediation.RetryCount)
+	require.True(t, hub.Status.LastRemediation.Time.Equal(&restored.Status.LastRemediation.Time), "time %s should round-trip", restored.Status.LastRemediation.Time)
 }

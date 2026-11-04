@@ -12,6 +12,7 @@ import (
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/yaml"
 )
@@ -542,5 +543,58 @@ func TestTalosControlPlaneTemplateValidateCreateChecksImageFactory(t *testing.T)
 	_, err := tcpt.ValidateCreate(context.Background(), tcpt)
 	if err == nil || !strings.Contains(err.Error(), "spec.template.spec.controlPlaneConfig.controlplane.imageFactory.overlay.image") {
 		t.Fatalf("expected an overlay.image error, got %v", err)
+	}
+}
+
+func TestTalosControlPlaneDefaultsRemediation(t *testing.T) {
+	t.Parallel()
+
+	tcp := &TalosControlPlane{
+		Spec: TalosControlPlaneSpec{
+			Version: "v1.34.0",
+			MachineTemplate: TalosControlPlaneMachineTemplate{
+				Spec: TalosControlPlaneMachineTemplateSpec{
+					InfrastructureRef: clusterv1.ContractVersionedObjectReference{
+						Name: "cp-template", Kind: "DockerMachineTemplate", APIGroup: "infrastructure.cluster.x-k8s.io",
+					},
+				},
+			},
+			Remediation: TalosControlPlaneRemediationSpec{MaxRetry: ptr.To[int32](0)},
+		},
+	}
+
+	if err := tcp.Default(context.Background(), tcp); err != nil {
+		t.Fatalf("default failed: %v", err)
+	}
+
+	if got := *tcp.Spec.Remediation.MaxRetry; got != 0 {
+		t.Fatalf("expected the user's maxRetry to be preserved, got %d", got)
+	}
+	if got := *tcp.Spec.Remediation.RetryPeriodSeconds; got != DefaultRemediationRetryPeriodSeconds {
+		t.Fatalf("expected retryPeriodSeconds to default to %d, got %d", DefaultRemediationRetryPeriodSeconds, got)
+	}
+	if got := *tcp.Spec.Remediation.MinHealthyPeriodSeconds; got != DefaultRemediationMinHealthyPeriodSeconds {
+		t.Fatalf("expected minHealthyPeriodSeconds to default to %d, got %d", DefaultRemediationMinHealthyPeriodSeconds, got)
+	}
+}
+
+func TestTalosControlPlaneTemplateDefaultsRemediation(t *testing.T) {
+	t.Parallel()
+
+	tcpt := &TalosControlPlaneTemplate{}
+
+	if err := tcpt.Default(context.Background(), tcpt); err != nil {
+		t.Fatalf("default failed: %v", err)
+	}
+
+	remediation := tcpt.Spec.Template.Spec.Remediation
+	if remediation.MaxRetry == nil || *remediation.MaxRetry != DefaultRemediationMaxRetry {
+		t.Fatalf("expected maxRetry to default to %d, got %v", DefaultRemediationMaxRetry, remediation.MaxRetry)
+	}
+	if remediation.RetryPeriodSeconds == nil || *remediation.RetryPeriodSeconds != DefaultRemediationRetryPeriodSeconds {
+		t.Fatalf("expected retryPeriodSeconds to default to %d, got %v", DefaultRemediationRetryPeriodSeconds, remediation.RetryPeriodSeconds)
+	}
+	if remediation.MinHealthyPeriodSeconds == nil || *remediation.MinHealthyPeriodSeconds != DefaultRemediationMinHealthyPeriodSeconds {
+		t.Fatalf("expected minHealthyPeriodSeconds to default to %d, got %v", DefaultRemediationMinHealthyPeriodSeconds, remediation.MinHealthyPeriodSeconds)
 	}
 }

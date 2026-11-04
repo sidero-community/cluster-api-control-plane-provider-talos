@@ -288,6 +288,64 @@ spec:
                                 type: object
                             type: object
                         type: object
+                      remediation:
+                        description: remediation controls how unhealthy control plane
+                          Machines are remediated.
+                        properties:
+                          maxRetry:
+                            description: "maxRetry is the maximum number of retries
+                              while attempting to remediate an unhealthy machine.\nA
+                              retry happens when a machine that was created as a replacement
+                              for an unhealthy machine also fails.\nFor example, given
+                              a control plane with three machines M1, M2, M3:\n\n\tM1
+                              become unhealthy; remediation happens, and M1-1 is created
+                              as a replacement.\n\tIf M1-1 (replacement of M1) has
+                              problems while bootstrapping it will become unhealthy,
+                              and then be\n\tremediated; such operation is considered
+                              a retry, remediation-retry #1.\n\tIf M1-2 (replacement
+                              of M1-1) becomes unhealthy, remediation-retry #2 will
+                              happen, etc.\n\nA retry could happen only after retryPeriodSeconds
+                              from the previous retry.\nIf a machine is marked as
+                              unhealthy after minHealthyPeriodSeconds from the previous
+                              remediation expired,\nthis is not considered a retry
+                              anymore because the new issue is assumed unrelated from
+                              the previous one.\n\nDefaults to 3, so that a machine
+                              that keeps failing for the same reason, a quota or an
+                              image\nproblem say, is not replaced forever."
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          minHealthyPeriodSeconds:
+                            description: "minHealthyPeriodSeconds defines the duration,
+                              in seconds, after which the TalosControlPlane\nconsiders
+                              any failure of a machine unrelated to the previous one.
+                              In this case the remediation\nis not considered a retry
+                              anymore, and thus the retry counter restarts from 0.
+                              For example,\nassuming minHealthyPeriodSeconds is set
+                              to 1h (default)\n\n\tM1 become unhealthy; remediation
+                              happens, and M1-1 is created as a replacement.\n\tIf
+                              M1-1 (replacement of M1) has problems within the 1hr
+                              after the creation, also\n\tthis machine will be remediated
+                              and this operation is considered a retry - a problem
+                              related\n\tto the original issue happened to M1 -.\n\n\tIf
+                              instead the problem on M1-1 is happening after minHealthyPeriodSeconds
+                              expired, e.g. four days after\n\tm1-1 has been created
+                              as a remediation of M1, the problem on M1-1 is considered
+                              unrelated to\n\tthe original issue happened to M1.\n\nDefaults
+                              to 3600."
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          retryPeriodSeconds:
+                            description: |-
+                              retryPeriodSeconds is the duration, in seconds, that the TalosControlPlane waits before
+                              remediating a machine being created as a replacement for an unhealthy machine (a retry).
+
+                              Defaults to 300.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                        type: object
                       rolloutStrategy:
                         default:
                           rollingUpdate:

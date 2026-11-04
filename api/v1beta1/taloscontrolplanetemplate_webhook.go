@@ -39,6 +39,7 @@ func (*TalosControlPlaneTemplate) Default(_ context.Context, obj *TalosControlPl
 
 func defaultTalosControlPlaneTemplateSpec(s *TalosControlPlaneTemplateSpec) {
 	s.Template.Spec.RolloutStrategy = defaultRolloutStrategy(s.Template.Spec.RolloutStrategy)
+	defaultRemediation(&s.Template.Spec.Remediation)
 }
 
 // ValidateCreate implements admission.Validator so a webhook will be registered for the type.
