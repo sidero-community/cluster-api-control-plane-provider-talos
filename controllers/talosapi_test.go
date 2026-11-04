@@ -75,6 +75,6 @@ func (suite *ControllersSuite) TestEtcdHealthcheckNamesTheMachine() {
 	g.Expect(fakeClient.Create(suite.ctx, n)).To(Succeed())
 	g.Expect(createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, machineAddress)).To(Succeed())
 
-	err := controllers.EtcdHealthcheck(r, suite.ctx, tcp, []clusterv1.Machine{*m})
+	_, err := controllers.EtcdHealthcheck(r, suite.ctx, tcp, []clusterv1.Machine{*m})
 	g.Expect(err).To(MatchError(ContainSubstring("quiet-machine: no events recorded yet")))
 }

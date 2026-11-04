@@ -392,6 +392,21 @@ quorum hold:
 kubectl annotate machine <name> pre-terminate.delete.hook.machine.cluster.x-k8s.io/tcp-cleanup-
 ```
 
+#### etcd health
+
+The `EtcdClusterHealthy` condition comes from a check that inspects every control plane machine
+that is neither deleting nor leaving etcd, concurrently and each within its own five-second
+budget, so that one unreachable machine neither hides the health of the others nor stacks its
+timeout on theirs. The check verifies membership rather than counting members: every machine must
+have an etcd member, matched by any of its names (the `nodeRef` name and every `MachineHostName`
+address, so a provider that reports the infrastructure machine name as the hostname still
+matches); a member matching no machine is an orphan and is removed; a machine without a `nodeRef`
+yet claims exactly one unmatched member; and every member must see the same cluster. When the
+check fails, the condition's reason tells a degraded cluster that still has quorum
+(`EtcdClusterUnhealthy`) from one that lost it (`EtcdClusterQuorumLost`), and from one where too
+few machines could be inspected to know (`EtcdClusterInspectionFailed`). The pre-terminate hook
+matches the leaving machine's member by the same names.
+
 #### Coexistence with reset-style hooks
 
 Reset-style pre-terminate hooks (for example a `talos-machine-teardown` hook that wipes the disks

@@ -109,7 +109,7 @@ func (r *TalosControlPlaneReconciler) reconcileInPlaceUpdates(
 	// Only start an update while etcd is healthy across the whole control plane, for the
 	// same reason: the node is about to become temporarily unavailable. An unhealthy etcd
 	// defers the decision; it must never turn into a rollout, which would make it worse.
-	if err := r.etcdHealthcheck(ctx, tcp, machineList(controlPlane.Machines)); err != nil {
+	if _, err := r.etcdHealthcheck(ctx, tcp, machineList(controlPlane.Machines)); err != nil {
 		r.Log.WithValues("machine", klog.KObj(candidate)).Info("deferring in-place update, etcd is not healthy", "error", err.Error())
 
 		return decision, nil

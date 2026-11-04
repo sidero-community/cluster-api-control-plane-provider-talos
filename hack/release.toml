@@ -40,6 +40,19 @@ from the domain holding the most, so a rolling update no longer drains a domain.
 The failure domain chosen for each machine is logged along with the domains that were eligible.
 """
 
+[notes.etcd]
+    title = "etcd health check"
+        description = """\
+The etcd health check inspects the control plane machines concurrently, each with its own
+timeout, and verifies etcd membership instead of counting members: every machine must have a
+member, matched by its node name or any `MachineHostName` address, a member matching no machine
+is an orphan, and a machine without a node yet claims one unmatched member. The
+`EtcdClusterHealthy` condition reports `EtcdClusterQuorumLost` when too few members are healthy
+for quorum and `EtcdClusterInspectionFailed` when too few machines could be inspected to tell,
+instead of `EtcdClusterUnhealthy` for every failure. The pre-terminate hook matches the leaving
+member by the same names.
+"""
+
 [notes.flags]
     title = "Flags"
         description = """\

@@ -5,6 +5,8 @@
 package controllers
 
 import (
+	"time"
+
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
@@ -43,4 +45,25 @@ func etcdMembersFor(names ...string) []*machineapi.EtcdMember {
 	}
 
 	return members
+}
+
+// newTestMachine returns a machine whose node carries the machine's name.
+func newTestMachine(name string, created time.Time, opts ...machineOption) *clusterv1.Machine {
+	m := &clusterv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{Name: name, CreationTimestamp: metav1.NewTime(created)},
+		Status:     clusterv1.MachineStatus{NodeRef: clusterv1.MachineNodeReference{Name: name}},
+	}
+
+	for _, opt := range opts {
+		opt(m)
+	}
+
+	return m
+}
+
+// withoutNodeRef strips the machine of its node, as a machine whose kubelet has not registered yet.
+func withoutNodeRef() machineOption {
+	return func(m *clusterv1.Machine) {
+		m.Status.NodeRef = clusterv1.MachineNodeReference{}
+	}
 }

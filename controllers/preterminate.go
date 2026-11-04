@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -466,21 +465,14 @@ func listEtcdMembers(ctx context.Context, c etcdCalls) ([]*machineapi.EtcdMember
 	return members, nil
 }
 
-// matchEtcdMember looks the machine up in a member list. A nil member with a nil error means
-// the machine is not a member (anymore).
+// matchEtcdMember looks the machine up in a member list, by any of its host names (see
+// nodeNamesForMachine). A nil member with a nil error means the machine is not a member (anymore).
 func matchEtcdMember(members []*machineapi.EtcdMember, victim *clusterv1.Machine) (*machineapi.EtcdMember, error) {
-	hostname := machineHostName(victim)
-	if hostname == "" {
+	if len(nodeNamesForMachine(victim)) == 0 {
 		return nil, errors.Errorf("machine %q has no hostname to match against the etcd member list", victim.Name)
 	}
 
-	for _, member := range members {
-		if strings.EqualFold(member.Hostname, hostname) {
-			return member, nil
-		}
-	}
-
-	return nil, nil
+	return findEtcdMember(members, victim), nil
 }
 
 // quorumShortfall says how far the etcd cluster would be from quorum after a removal.

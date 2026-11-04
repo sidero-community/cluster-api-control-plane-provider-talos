@@ -883,11 +883,13 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, 
 		errs = kerrors.NewAggregate([]error{errs, err})
 	}
 
-	if err := r.etcdHealthcheck(ctx, tcp, machines.Items); err != nil {
+	health, err := r.etcdHealthcheck(ctx, tcp, machines.Items)
+	if err != nil {
+		// The reason tells a degraded etcd cluster from one that lost quorum, or could not be inspected.
 		conditions.Set(tcp, metav1.Condition{
 			Type:    string(controlplanev1.EtcdClusterHealthyCondition),
 			Status:  metav1.ConditionFalse,
-			Reason:  controlplanev1.EtcdClusterUnhealthyReason,
+			Reason:  health.conditionReason(),
 			Message: fmt.Sprintf("Failed to perform etcd healthcheck: %v", err),
 		})
 		errs = kerrors.NewAggregate([]error{errs, err})

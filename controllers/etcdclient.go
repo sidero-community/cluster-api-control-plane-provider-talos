@@ -6,7 +6,6 @@ package controllers
 
 import (
 	"context"
-	"strings"
 
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
@@ -37,23 +36,4 @@ func (r *TalosControlPlaneReconciler) etcdClientFor(ctx context.Context, tcp *co
 	}
 
 	return r.talosconfigForMachines(ctx, tcp, machines...)
-}
-
-// machineHostName returns the hostname etcd is expected to report for a machine: the NodeRef
-// name, overridden by a MachineHostName status address, cut down from an FQDN.
-func machineHostName(machine *clusterv1.Machine) string {
-	hostname := machine.Status.NodeRef.Name
-
-	for _, address := range machine.Status.Addresses {
-		if address.Type == clusterv1.MachineHostName {
-			hostname = address.Address
-
-			break
-		}
-	}
-
-	// break apart the noderef name in case it's an fqdn (like in AWS)
-	hostname, _, _ = strings.Cut(hostname, ".")
-
-	return hostname
 }

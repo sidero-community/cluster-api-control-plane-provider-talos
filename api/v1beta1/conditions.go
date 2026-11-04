@@ -100,6 +100,13 @@ const (
 
 	// EtcdClusterHealthyReason documents that the etcd cluster is healthy.
 	EtcdClusterHealthyReason = "EtcdClusterHealthy"
+
+	// EtcdClusterQuorumLostReason (Severity=Error) is set when too few etcd members are healthy for etcd to keep quorum.
+	EtcdClusterQuorumLostReason = "EtcdClusterQuorumLost"
+
+	// EtcdClusterInspectionFailedReason is set when the etcd service could not be inspected on any control plane
+	// machine, or on enough of them for the quorum to be unknown.
+	EtcdClusterInspectionFailedReason = "EtcdClusterInspectionFailed"
 )
 
 const (
