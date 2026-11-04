@@ -42,7 +42,7 @@ func (r *TalosControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, c
 	// Create a new Machine w/ join
 	r.Log.Info("scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-	return r.bootControlPlane(ctx, cluster, tcp)
+	return r.bootControlPlane(ctx, cluster, tcp, controlPlane)
 }
 
 func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
@@ -77,7 +77,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 		return ctrl.Result{}, fmt.Errorf("no machines found")
 	}
 
-	victim, err := selectMachineForScaleDown(controlPlane, machinesRequireUpgrade)
+	victim, err := selectMachineForScaleDown(ctx, controlPlane, machinesRequireUpgrade)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -104,7 +104,8 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 // (reconcileMachinePreTerminateHooks) and its Node is deleted by the core Machine controller
 // once the infrastructure is gone -- exactly what happens on a `kubectl delete machine`.
 func (r *TalosControlPlaneReconciler) deleteControlPlaneMachine(ctx context.Context, machine *clusterv1.Machine) (ctrl.Result, error) {
-	r.Log.Info("deleting machine", "machine", machine.Name, "node", machine.Status.NodeRef.Name)
+	r.Log.Info("deleting machine", "machine", machine.Name, "node", machine.Status.NodeRef.Name,
+		"failureDomain", machine.Spec.FailureDomain)
 
 	if err := r.Client.Delete(ctx, machine); err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, errors.Wrapf(err, "failed to delete control plane machine %q", machine.Name)
@@ -113,16 +114,24 @@ func (r *TalosControlPlaneReconciler) deleteControlPlaneMachine(ctx context.Cont
 	return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 }
 
-func selectMachineForScaleDown(controlPlane *ControlPlane, outdatedMachines collections.Machines) (*clusterv1.Machine, error) {
+// selectMachineForScaleDown picks the machine to remove: one the user annotated for deletion first,
+// then one a MachineHealthCheck flagged for remediation (removing anything else while that member is
+// down could cost etcd its quorum), then an outdated one, and any machine otherwise. Among the
+// candidates left, the one in the failure domain holding the most machines is removed.
+func selectMachineForScaleDown(ctx context.Context, controlPlane *ControlPlane, outdatedMachines collections.Machines) (*clusterv1.Machine, error) {
 	machines := controlPlane.Machines
 	switch {
 	case controlPlane.MachineWithDeleteAnnotation(outdatedMachines).Len() > 0:
 		machines = controlPlane.MachineWithDeleteAnnotation(outdatedMachines)
 	case controlPlane.MachineWithDeleteAnnotation(machines).Len() > 0:
 		machines = controlPlane.MachineWithDeleteAnnotation(machines)
+	case outdatedMachines.Filter(collections.IsUnhealthyAndOwnerRemediated).Len() > 0:
+		machines = outdatedMachines.Filter(collections.IsUnhealthyAndOwnerRemediated)
+	case controlPlane.UnhealthyMachines().Len() > 0:
+		machines = controlPlane.UnhealthyMachines()
 	case outdatedMachines.Len() > 0:
 		machines = outdatedMachines
 	}
 
-	return machines.Oldest(), nil
+	return controlPlane.MachineInFailureDomainWithMostMachines(ctx, machines)
 }

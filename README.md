@@ -300,6 +300,18 @@ named `talos-topology-control-plane`, and control plane machines named
 See `config/samples/topology_v1alpha3_clusterclass_with_taloscontrolplanetemplate.yaml` for a ClusterClass / Cluster fragment including workers.
 That sample assumes the referenced infrastructure and worker bootstrap templates already exist.
 
+### Failure domains
+
+Control plane machines are spread across the failure domains the cluster reports in
+`status.failureDomains`, the way the Kubeadm Control Plane provider spreads its machines. Only the
+domains marked `controlPlane: true` are used; when the infrastructure provider marks none of them,
+all of them are. A new machine goes to the domain holding the fewest up-to-date machines, with ties
+broken by the fewest machines overall, and a scale-down removes a machine from the domain holding
+the most, so a rolling update does not drain a domain. Every machine creation logs the domain
+picked and the domains that were eligible, and says so when the cluster reports no failure domains
+or fewer than the desired replicas, since a control plane that cannot be spread is a property of
+the infrastructure provider rather than of this controller.
+
 ### Machine deletion and etcd
 
 Control plane `Machine` deletion follows the Kubeadm Control Plane provider's pattern, on every
