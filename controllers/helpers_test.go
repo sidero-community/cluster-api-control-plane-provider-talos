@@ -283,11 +283,11 @@ func untypedCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDefi
 	return generateCRD(gvk, map[string]apiextensionsv1.JSONSchemaProps{
 		"spec": {
 			Type:                   "object",
-			XPreserveUnknownFields: ptr.To(true),
+			XPreserveUnknownFields: new(true),
 		},
 		"status": {
 			Type:                   "object",
-			XPreserveUnknownFields: ptr.To(true),
+			XPreserveUnknownFields: new(true),
 		},
 	})
 }

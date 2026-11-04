@@ -137,7 +137,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 
 	// Test: cluster is paused and tcp is not
 	cluster := newCluster(&types.NamespacedName{Namespace: metav1.NamespaceDefault, Name: clusterName})
-	cluster.Spec.Paused = ptr.To(true)
+	cluster.Spec.Paused = new(true)
 	tcp := &controlplanev1.TalosControlPlane{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: metav1.NamespaceDefault,
@@ -177,7 +177,7 @@ func (suite *ControllersSuite) TestReconcilePaused() {
 	g.Expect(machineList.Items).To(BeEmpty())
 
 	// Test: tcp is paused and cluster is not
-	cluster.Spec.Paused = ptr.To(false)
+	cluster.Spec.Paused = new(false)
 	tcp.ObjectMeta.Annotations = map[string]string{}
 	tcp.ObjectMeta.Annotations[clusterv1.PausedAnnotation] = "paused"
 	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
@@ -189,7 +189,7 @@ func (suite *ControllersSuite) TestReconcileClusterNoEndpoints() {
 
 	cluster := newCluster(&types.NamespacedName{Name: "foo", Namespace: metav1.NamespaceDefault})
 	cluster.Status.Initialization = clusterv1.ClusterInitializationStatus{
-		InfrastructureProvisioned: ptr.To(true),
+		InfrastructureProvisioned: new(true),
 	}
 
 	tcp := &controlplanev1.TalosControlPlane{
@@ -276,7 +276,7 @@ func (suite *ControllersSuite) TestReconcileInfrastructureReadyConditionFalse() 
 		},
 	}
 	cluster.Status.Initialization = clusterv1.ClusterInitializationStatus{
-		InfrastructureProvisioned: ptr.To(true),
+		InfrastructureProvisioned: new(true),
 	}
 	// The InfrastructureReady condition may go back to false while control plane
 	// machines are still bootstrapping; it must not block reconciliation.
@@ -1018,7 +1018,7 @@ func (suite *ControllersSuite) setupCluster(fakeClient client.Client, ns string,
 	patchHelper, err := patch.NewHelper(cluster, fakeClient)
 	g.Expect(err).To(BeNil())
 	cluster.Status.Initialization = clusterv1.ClusterInitializationStatus{
-		InfrastructureProvisioned: ptr.To(true),
+		InfrastructureProvisioned: new(true),
 	}
 	g.Expect(patchHelper.Patch(suite.ctx, cluster)).To(Succeed())
 
@@ -1101,7 +1101,7 @@ func (suite *ControllersSuite) TestReconcileRequeuesAPausedClusterAfterAFixedInt
 	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-paused", nil)
 
 	g.Expect(fakeClient.Get(suite.ctx, util.ObjectKey(cluster), cluster)).To(Succeed())
-	cluster.Spec.Paused = ptr.To(true)
+	cluster.Spec.Paused = new(true)
 	g.Expect(fakeClient.Update(suite.ctx, cluster)).To(Succeed())
 
 	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))

@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/collections"
 
@@ -94,7 +93,7 @@ func controlPlaneDomains(names ...string) []clusterv1.FailureDomain {
 	failureDomains := make([]clusterv1.FailureDomain, 0, len(names))
 
 	for _, name := range names {
-		failureDomains = append(failureDomains, clusterv1.FailureDomain{Name: name, ControlPlane: ptr.To(true)})
+		failureDomains = append(failureDomains, clusterv1.FailureDomain{Name: name, ControlPlane: new(true)})
 	}
 
 	return failureDomains
@@ -134,9 +133,9 @@ func TestControlPlaneFailureDomains(t *testing.T) {
 		{
 			name: "filters out non control plane domains",
 			failureDomains: []clusterv1.FailureDomain{
-				{Name: "a", ControlPlane: ptr.To(true)},
-				{Name: "b", ControlPlane: ptr.To(false)},
-				{Name: "c", ControlPlane: ptr.To(true)},
+				{Name: "a", ControlPlane: new(true)},
+				{Name: "b", ControlPlane: new(false)},
+				{Name: "c", ControlPlane: new(true)},
 			},
 			expected: []string{"a", "c"},
 		},
@@ -144,17 +143,17 @@ func TestControlPlaneFailureDomains(t *testing.T) {
 			name: "falls back to all domains when none are marked for the control plane",
 			failureDomains: []clusterv1.FailureDomain{
 				{Name: "c"},
-				{Name: "a", ControlPlane: ptr.To(false)},
-				{Name: "b", ControlPlane: ptr.To(false)},
+				{Name: "a", ControlPlane: new(false)},
+				{Name: "b", ControlPlane: new(false)},
 			},
 			expected: []string{"a", "b", "c"},
 		},
 		{
 			name: "keeps the single control plane domain even when others are available",
 			failureDomains: []clusterv1.FailureDomain{
-				{Name: "a", ControlPlane: ptr.To(true)},
-				{Name: "b", ControlPlane: ptr.To(false)},
-				{Name: "c", ControlPlane: ptr.To(false)},
+				{Name: "a", ControlPlane: new(true)},
+				{Name: "b", ControlPlane: new(false)},
+				{Name: "c", ControlPlane: new(false)},
 			},
 			expected: []string{"a"},
 		},
