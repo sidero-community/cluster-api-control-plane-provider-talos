@@ -141,7 +141,7 @@ require (
 	golang.org/x/exp v0.0.0-20260709172345-9ea1abe57597 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
@@ -163,4 +163,4 @@ require (
 // replace. In-place control plane updates only work against the forked CABPT: this provider
 // stamps UpdateInProgressAnnotation, and the forked bootstrap provider is what reacts to it
 // by regenerating the machine configuration. Upstream is no longer developed.
-replace github.com/siderolabs/cluster-api-bootstrap-provider-talos => github.com/sidero-community/cluster-api-bootstrap-provider-talos v0.9.0
+replace github.com/siderolabs/cluster-api-bootstrap-provider-talos => github.com/sidero-community/cluster-api-bootstrap-provider-talos v0.9.1
