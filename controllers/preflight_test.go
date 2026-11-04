@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -142,4 +143,105 @@ func TestPreflight_ExcludesTheScaleDownVictim(t *testing.T) {
 
 	assert.Nil(t, f.r.preflightChecks(context.Background(), f.tcp, f.collection(), victim))
 	assert.NotContains(t, f.dialer.dialed, "cp-1")
+}
+
+// --- scale-up while a remediation is in progress ---------------------------
+
+// rmInProgress records a remediation in progress on the TalosControlPlane.
+func rmInProgress(t *testing.T, tcp *controlplanev1.TalosControlPlane) {
+	t.Helper()
+
+	if tcp.Annotations == nil {
+		tcp.Annotations = map[string]string{}
+	}
+
+	tcp.Annotations[remediationInProgressAnnotation] = remediationValue(t, "m0", time.Now().Add(-time.Minute), 0)
+}
+
+// While the replacement of a remediated machine is to be created, a control plane that fails the regular checks is
+// still allowed to grow when one machine can take the join and etcd keeps quorum with one more member.
+func TestPreflightForScaleUp_RelaxedWhileRemediating(t *testing.T) {
+	// 5 replicas, m0 remediated and gone, m4 unhealthy: the regular checks fail on m4 and on the etcd condition.
+	setup := func(t *testing.T, inProgress bool) (*preTerminateFixture, map[string]etcdMachineStatus) {
+		t.Helper()
+
+		tcp := newPreTerminateTCP()
+		tcp.Spec.Replicas = ptr.To[int32](5)
+
+		if inProgress {
+			rmInProgress(t, tcp)
+		}
+
+		f := newPreTerminateFixtureWithTCP(t, tcp,
+			newPTMachine(tcp, "m1", ptHooked),
+			newPTMachine(tcp, "m2", ptHooked),
+			newPTMachine(tcp, "m3", ptHooked),
+			newPTMachine(tcp, "m4", ptHooked))
+
+		for _, name := range []string{"m1", "m2", "m3"} {
+			f.dialer.clients[name] = &fakeEtcdCalls{name: name, serviceList: healthyServices()}
+		}
+
+		f.dialer.clients["m4"] = &fakeEtcdCalls{name: "m4", serviceList: unhealthyServices()}
+
+		return f, recordedEtcd([]string{"m1", "m2", "m3", "m4"}, "m4")
+	}
+
+	t.Run("passes when the replacement is viable", func(t *testing.T) {
+		f, statuses := setup(t, true)
+
+		assert.Nil(t, f.r.preflightChecksForScaleUp(context.Background(), f.tcp, f.collection(), statuses))
+	})
+
+	t.Run("still applies the regular checks without a remediation in progress", func(t *testing.T) {
+		f, statuses := setup(t, false)
+
+		failure := f.r.preflightChecksForScaleUp(context.Background(), f.tcp, f.collection(), statuses)
+		require.NotNil(t, failure)
+		assert.Contains(t, failure.message, "control plane components are not healthy")
+	})
+
+	t.Run("refuses when adding a member could cost etcd its quorum", func(t *testing.T) {
+		f, _ := setup(t, true)
+
+		// m3 and m4 unhealthy: 2 of 5 voting members with the new one, below the quorum of 3.
+		statuses := recordedEtcd([]string{"m1", "m2", "m3", "m4"}, "m3", "m4")
+
+		failure := f.r.preflightChecksForScaleUp(context.Background(), f.tcp, f.collection(), statuses)
+		require.NotNil(t, failure)
+		assert.Contains(t, failure.message, "remediation in progress")
+		assert.Contains(t, failure.message, "adding an etcd member could result in etcd quorum loss")
+	})
+
+	t.Run("refuses when no machine can take the join", func(t *testing.T) {
+		f, statuses := setup(t, true)
+
+		for _, name := range []string{"m1", "m2", "m3"} {
+			f.dialer.clients[name] = &fakeEtcdCalls{name: name, serviceList: unhealthyServices()}
+		}
+
+		failure := f.r.preflightChecksForScaleUp(context.Background(), f.tcp, f.collection(), statuses)
+		require.NotNil(t, failure)
+		assert.Contains(t, failure.message, "no control plane machine has all its components healthy")
+	})
+
+	t.Run("refuses when etcd could not be checked", func(t *testing.T) {
+		f, _ := setup(t, true)
+
+		failure := f.r.preflightChecksForScaleUp(context.Background(), f.tcp, f.collection(), nil)
+		require.NotNil(t, failure)
+		assert.Contains(t, failure.message, "etcd cluster health could not be checked")
+	})
+
+	t.Run("waits for deleting machines in any case", func(t *testing.T) {
+		f, statuses := setup(t, true)
+
+		machines := f.collection()
+		deletionTimestamp := metav1.Now()
+		machines["m4"].DeletionTimestamp = &deletionTimestamp
+
+		failure := f.r.preflightChecksForScaleUp(context.Background(), f.tcp, machines, statuses)
+		require.NotNil(t, failure)
+		assert.Contains(t, failure.message, "waiting for machines to be deleted: m4")
+	})
 }

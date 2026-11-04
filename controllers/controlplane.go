@@ -42,6 +42,10 @@ type ControlPlane struct {
 
 	infraObjects map[string]*unstructured.Unstructured
 	talosConfigs map[string]*cabptv1.TalosConfig
+
+	// etcdStatuses is what the etcd health check of this reconcile recorded on each machine, by machine name. It is
+	// nil when the health check did not run, e.g. in reconciles that stop before it.
+	etcdStatuses map[string]etcdMachineStatus
 }
 
 // newControlPlane returns an instantiated ControlPlane.

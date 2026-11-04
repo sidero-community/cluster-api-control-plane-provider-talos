@@ -27,8 +27,10 @@ func (r *TalosControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, c
 	summary := fmt.Sprintf("Scaling up control plane to %d replicas (actual %d)", desiredReplicas, numMachines)
 
 	// A replacement joins an etcd cluster that has to be able to take it: no deletion still in
-	// flight, every existing machine with a node, components and etcd healthy. Like KCP.
-	if failure := r.preflightChecks(ctx, tcp, controlPlane.Machines); failure != nil {
+	// flight, every existing machine with a node, components and etcd healthy. Like KCP. While a
+	// remediation is in progress the bar is lower, so that a control plane with more than one
+	// failure can still recover one machine at a time.
+	if failure := r.preflightChecksForScaleUp(ctx, tcp, controlPlane.Machines, controlPlane.etcdStatuses); failure != nil {
 		return r.holdScaleOperation(tcp, controlplanev1.ScalingUpReason, summary, failure), nil
 	}
 
@@ -88,7 +90,7 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 		return r.holdScaleOperation(tcp, controlplanev1.ScalingDownReason, summary, failure), nil
 	}
 
-	if err := r.ensureNodesBooted(ctx, controlPlane.TCP, collections.ToMachineList(controlPlane.Machines).Items); err != nil {
+	if err := r.ensureNodesBooted(ctx, controlPlane.TCP, bootCheckMachines(controlPlane.Machines)); err != nil {
 		r.Log.Info("waiting for all nodes to finish boot sequence", "error", err)
 
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
@@ -97,6 +99,14 @@ func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
 	r.Log.Info("scaling down control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
 	return r.deleteControlPlaneMachine(ctx, victim)
+}
+
+// bootCheckMachines returns the machines a scale-down waits on to finish booting: every machine but
+// the ones a MachineHealthCheck flagged for remediation, which are on their way out and may never
+// finish booting again (an unreachable machine, say). Waiting for them would keep the scale-down
+// from ever deleting them.
+func bootCheckMachines(machines collections.Machines) []clusterv1.Machine {
+	return collections.ToMachineList(machines.Filter(collections.Not(collections.IsUnhealthyAndOwnerRemediated))).Items
 }
 
 // deleteControlPlaneMachine requests the deletion of a control plane machine, and nothing

@@ -20,7 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/events"
-	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -452,7 +451,7 @@ func TestPreTerminateHook_IgnoresMachinesNotOwnedByTCP(t *testing.T) {
 		Kind:       "MachineSet",
 		Name:       "other",
 		UID:        "other-uid",
-		Controller: ptr.To(true),
+		Controller: new(true),
 	}}
 
 	f := newPreTerminateFixture(t, foreign)
@@ -936,4 +935,82 @@ func TestPreTerminateHook_CountsADeletingPeerWithRunningEtcd(t *testing.T) {
 
 	assert.False(t, f.hasHook(t, "cp-1"), "cp-2 and cp-3 both still vote, so cp-1 may leave")
 	assert.True(t, f.hasHook(t, "cp-3"), "one membership change at a time")
+}
+
+// --- 1H.9: a victim without a node name ------------------------------------
+
+// ptNameless strips the machine of every name its etcd member could be matched by: it never registered a node and
+// reports no MachineHostName address, as a machine whose kubelet never came up.
+func ptNameless(m *clusterv1.Machine) {
+	m.Status.NodeRef = clusterv1.MachineNodeReference{}
+	m.Status.Addresses = clusterv1.MachineAddresses{{Type: clusterv1.MachineInternalIP, Address: "10.0.0.1"}}
+}
+
+func TestPreTerminateHook_IdentifiesANamelessVictimByElimination(t *testing.T) {
+	tcp := newPreTerminateTCP()
+	victim := newPTMachine(tcp, "cp-1", ptHooked, ptNameless, ptDeleting(time.Now(), clusterv1.MachineDeletingWaitingForPreTerminateHookReason))
+	peer := newPTMachine(tcp, "cp-2", ptHooked)
+	other := newPTMachine(tcp, "cp-3", ptHooked)
+
+	f := newPreTerminateFixture(t, victim, peer, other)
+	f.dialer.clients["cp-2"] = &fakeEtcdCalls{
+		name:     "cp-2",
+		members:  []*machineapi.EtcdMember{{Id: 1, Hostname: "unregistered"}, {Id: 2, Hostname: "cp-2"}, {Id: 3, Hostname: "cp-3"}},
+		services: runningEtcd(),
+	}
+	f.dialer.clients["cp-3"] = &fakeEtcdCalls{name: "cp-3", services: runningEtcd()}
+	f.dialer.dialErrs["cp-1"] = fmt.Errorf("connection refused")
+
+	_, err := f.run(context.Background())
+	require.NoError(t, err)
+
+	assert.False(t, f.hasHook(t, "cp-1"))
+	assert.Equal(t, []uint64{1}, f.dialer.clients["cp-2"].removedIDs, "the only member matching no other machine is the victim's")
+	assert.Contains(t, strings.Join(f.events(), "\n"), "EtcdMemberRemovedViaPeer")
+}
+
+func TestPreTerminateHook_ReleasesANamelessVictimWithoutMember(t *testing.T) {
+	tcp := newPreTerminateTCP()
+	victim := newPTMachine(tcp, "cp-1", ptHooked, ptNameless, ptDeleting(time.Now(), clusterv1.MachineDeletingWaitingForPreTerminateHookReason))
+	peer := newPTMachine(tcp, "cp-2", ptHooked)
+
+	f := newPreTerminateFixture(t, victim, peer)
+	f.dialer.clients["cp-2"] = &fakeEtcdCalls{
+		name:     "cp-2",
+		members:  []*machineapi.EtcdMember{{Id: 2, Hostname: "cp-2"}},
+		services: runningEtcd(),
+	}
+
+	_, err := f.run(context.Background())
+	require.NoError(t, err)
+
+	assert.False(t, f.hasHook(t, "cp-1"))
+	assert.Empty(t, f.dialer.clients["cp-2"].removedIDs)
+	assert.Contains(t, strings.Join(f.events(), "\n"), "EtcdCleanupSkipped")
+}
+
+// When the victim's member can't be told apart, retrying is pointless: the hook is released right away rather than
+// after the fail-open deadline, and the member, if any, is left to the etcd audit.
+func TestPreTerminateHook_ReleasesANamelessVictimItCannotIdentify(t *testing.T) {
+	tcp := newPreTerminateTCP()
+	victim := newPTMachine(tcp, "cp-1", ptHooked, ptNameless, ptDeleting(time.Now(), clusterv1.MachineDeletingWaitingForPreTerminateHookReason))
+	peer := newPTMachine(tcp, "cp-2", ptHooked)
+
+	f := newPreTerminateFixture(t, victim, peer)
+	f.dialer.clients["cp-2"] = &fakeEtcdCalls{
+		name:     "cp-2",
+		members:  []*machineapi.EtcdMember{{Id: 1, Hostname: "unregistered"}, {Id: 2, Hostname: "cp-2"}, {Id: 3, Hostname: "stray"}},
+		services: runningEtcd(),
+	}
+
+	res, err := f.run(context.Background())
+	require.NoError(t, err)
+	assert.Zero(t, res.RequeueAfter)
+
+	assert.False(t, f.hasHook(t, "cp-1"), "released immediately, not after the fail-open deadline")
+	assert.Empty(t, f.dialer.clients["cp-2"].removedIDs, "no guess is made about which member to remove")
+
+	events := strings.Join(f.events(), "\n")
+	assert.Contains(t, events, "EtcdCleanupOrphaned")
+	assert.Contains(t, events, "Warning")
 }

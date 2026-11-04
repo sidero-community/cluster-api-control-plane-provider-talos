@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -81,6 +82,13 @@ func (r *TalosControlPlaneReconciler) desiredMachineAnnotations(tcp *controlplan
 	}
 
 	annotations[PreTerminateHookCleanupAnnotation] = ""
+
+	// A Machine created while a remediation is in progress replaces the remediated Machine: record
+	// the remediation on it right away, so that its retries are counted even if the remediation
+	// completes without it. Like KCP.
+	if value, ok := tcp.Annotations[remediationInProgressAnnotation]; ok {
+		annotations[remediationForAnnotation] = value
+	}
 
 	return annotations
 }
@@ -228,9 +236,16 @@ func (r *TalosControlPlaneReconciler) reconcilePreTerminateHookForMachine(
 		return r.failOpenOrRetry(ctx, victim, errors.Wrapf(err, "failed to list etcd members via machine %q", peer.Name))
 	}
 
-	member, err := matchEtcdMember(members, victim)
-	if err != nil {
-		return r.failOpenOrRetry(ctx, victim, err)
+	// The victim's member is matched by its host names. A victim that never registered a node and
+	// reports no MachineHostName address has none, so its member is found by elimination among the
+	// owned machines instead (see identifyEtcdMember). When that fails too, retrying buys nothing:
+	// a name never appears on a machine that is being deleted. The hook is released, as KCP does,
+	// and the member, if there is one, matches no machine once the machine is gone and is removed
+	// by the etcd audit.
+	member, known := identifyEtcdMember(members, victim, owned)
+	if !known {
+		return r.releasePreTerminateHookWithEvent(ctx, victim, corev1.EventTypeWarning, etcdCleanupOrphanedEvent,
+			"the etcd member of the machine, if any, could not be identified: the machine has no node name and more than one member matches no other machine; it will be removed by the etcd audit once the machine is gone")
 	}
 
 	if member == nil {
@@ -465,16 +480,6 @@ func listEtcdMembers(ctx context.Context, c etcdCalls) ([]*machineapi.EtcdMember
 	return members, nil
 }
 
-// matchEtcdMember looks the machine up in a member list, by any of its host names (see
-// nodeNamesForMachine). A nil member with a nil error means the machine is not a member (anymore).
-func matchEtcdMember(members []*machineapi.EtcdMember, victim *clusterv1.Machine) (*machineapi.EtcdMember, error) {
-	if len(nodeNamesForMachine(victim)) == 0 {
-		return nil, errors.Errorf("machine %q has no hostname to match against the etcd member list", victim.Name)
-	}
-
-	return findEtcdMember(members, victim), nil
-}
-
 // quorumShortfall says how far the etcd cluster would be from quorum after a removal.
 type quorumShortfall struct {
 	healthy, members, quorum int
@@ -484,6 +489,12 @@ type quorumShortfall struct {
 // victim's member is gone. Every owned machine other than the victim is a candidate voter --
 // including ones that are themselves deleting but whose etcd is still running -- except
 // machines already marked as leaving etcd. An unreachable machine counts as unhealthy.
+//
+// The candidates are probed concurrently, each within its own timeout, so that an unreachable
+// one neither hides the health of the others nor stacks its timeout on theirs; like the etcd
+// health check. The probe is live rather than read off that health check: hooks are serviced
+// before it in the reconcile, and the last check before a member leaves must not trust stale
+// numbers.
 func (r *TalosControlPlaneReconciler) quorumAfterRemoval(
 	ctx context.Context,
 	tcp *controlplanev1.TalosControlPlane,
@@ -491,14 +502,32 @@ func (r *TalosControlPlaneReconciler) quorumAfterRemoval(
 	victim *clusterv1.Machine,
 	memberCount int,
 ) *quorumShortfall {
-	healthy := 0
+	candidates := make([]*clusterv1.Machine, 0, len(owned))
 
 	for _, machine := range owned {
 		if machine.Name == victim.Name || machine.Annotations[etcdLeavingAnnotation] == "true" {
 			continue
 		}
 
-		if r.etcdHealthyOn(ctx, tcp, machine) {
+		candidates = append(candidates, machine)
+	}
+
+	results := make([]bool, len(candidates))
+
+	var wg sync.WaitGroup
+
+	for i, machine := range candidates {
+		wg.Go(func() {
+			results[i] = r.etcdHealthyOn(ctx, tcp, machine)
+		})
+	}
+
+	wg.Wait()
+
+	healthy := 0
+
+	for _, ok := range results {
+		if ok {
 			healthy++
 		}
 	}

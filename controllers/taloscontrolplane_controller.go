@@ -76,6 +76,10 @@ type TalosControlPlaneReconciler struct {
 	// etcdDialer overrides how Talos clients are opened for etcd operations. Nil in production,
 	// where talosconfigForMachines is used; tests set it to inject a fake.
 	etcdDialer func(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines ...clusterv1.Machine) (etcdCalls, error)
+
+	// etcdDataChecker overrides how the presence of etcd data on a machine is checked (see
+	// hasEtcdDataOn). Nil in production; tests set it to inject a fake.
+	etcdDataChecker func(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine clusterv1.Machine) (bool, error)
 }
 
 func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
@@ -259,15 +263,27 @@ func (r *TalosControlPlaneReconciler) reconcile(ctx context.Context, cluster *cl
 		errs        = hookErr
 		result      = hookResult
 		phaseResult ctrl.Result
+
+		// etcdStatuses is what the etcd health check recorded on each machine, which remediation judges etcd quorum
+		// by instead of inspecting etcd again.
+		etcdStatuses map[string]etcdMachineStatus
 	)
 
 	// run all similar reconcile steps in the loop and pick the lowest RetryAfter, aggregate errors and check the requeue flags.
+	// Remediation and scaling both delete Machines, so they run together as the last step, which deletes at most one Machine.
 	for _, phase := range []func(context.Context, *clusterv1.Cluster, *controlplanev1.TalosControlPlane, *clusterv1.MachineList) (ctrl.Result, error){
-		r.reconcileEtcdMembers,
+		func(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (ctrl.Result, error) {
+			result, statuses, err := r.reconcileEtcdMembers(ctx, cluster, tcp, machines)
+			etcdStatuses = statuses
+
+			return result, err
+		},
 		r.reconcileNodeHealth,
 		r.reconcileConditions,
 		r.reconcileKubeconfig,
-		r.reconcileMachines,
+		func(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (ctrl.Result, error) {
+			return r.reconcileRemediationAndMachines(ctx, cluster, tcp, machines, etcdStatuses)
+		},
 	} {
 		phaseResult, err = phase(ctx, cluster, tcp, &ownedMachines)
 		if err != nil {
@@ -552,6 +568,13 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 		return ctrl.Result{}, errors.Wrap(err, "Failed to create machine")
 	}
 
+	// The Machine replacing a remediated Machine exists, with the remediation recorded on it (see
+	// desiredMachineAnnotations): the remediation is complete as far as the TalosControlPlane is
+	// concerned, and the next one may start.
+	if err := r.clearRemediationInProgress(ctx, tcp); err != nil {
+		return ctrl.Result{RequeueAfter: 20 * time.Second}, err
+	}
+
 	return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 }
 
@@ -661,7 +684,7 @@ func (r *TalosControlPlaneReconciler) generateTalosConfig(ctx context.Context, t
 		Kind:               "TalosControlPlane",
 		Name:               tcp.Name,
 		UID:                tcp.UID,
-		BlockOwnerDeletion: ptr.To(true),
+		BlockOwnerDeletion: new(true),
 	}
 
 	bootstrapConfig := &cabptv1.TalosConfig{
@@ -707,6 +730,8 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	if err != nil {
 		return err
 	}
+
+	r.reconcileRemediationStatus(tcp, collections.FromMachineList(&ownedMachines))
 
 	nonDeletingMachines := collections.FromMachineList(&ownedMachines).Filter(collections.Not(collections.HasDeletionTimestamp))
 	replicas := int32(nonDeletingMachines.Len())
@@ -761,8 +786,8 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 		}
 	}
 
-	tcp.Status.AvailableReplicas = ptr.To(availableReplicas)
-	tcp.Status.UpToDateReplicas = ptr.To(upToDateReplicas)
+	tcp.Status.AvailableReplicas = new(availableReplicas)
+	tcp.Status.UpToDateReplicas = new(upToDateReplicas)
 	tcp.Status.ReadyReplicas = readyReplicas
 
 	// Probe workload cluster reachability to set Initialized + AvailableCondition. Failure here
@@ -788,7 +813,7 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 
 	// if we were able to fetch some resources via control plane endpoint,
 	// workload cluster control plane endpoint is available
-	tcp.Status.Initialization.ControlPlaneInitialized = ptr.To(true)
+	tcp.Status.Initialization.ControlPlaneInitialized = new(true)
 	conditions.Set(tcp, metav1.Condition{
 		Type:   string(controlplanev1.AvailableCondition),
 		Status: metav1.ConditionTrue,
@@ -876,7 +901,9 @@ func (r *TalosControlPlaneReconciler) reconcileKubeconfig(ctx context.Context, c
 	return ctrl.Result{}, nil
 }
 
-func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (result ctrl.Result, err error) {
+// reconcileEtcdMembers removes orphaned etcd members, checks etcd health into the EtcdClusterHealthy condition, and
+// returns what the health check recorded on each machine (see etcdHealth.statuses), also when it failed.
+func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (ctrl.Result, map[string]etcdMachineStatus, error) {
 	var errs error
 	// Audit the etcd member list to remove any nodes that no longer exist
 	if err := r.auditEtcd(ctx, tcp, util.ObjectKey(cluster)); err != nil {
@@ -902,10 +929,10 @@ func (r *TalosControlPlaneReconciler) reconcileEtcdMembers(ctx context.Context, 
 	}
 
 	if errs != nil {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, errs
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, health.statuses, errs
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, health.statuses, nil
 }
 
 func (r *TalosControlPlaneReconciler) reconcileNodeHealth(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (result ctrl.Result, err error) {
@@ -1023,7 +1050,10 @@ func (r *TalosControlPlaneReconciler) reconcileMachineTemplateState(ctx context.
 	return nil
 }
 
-func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList) (res ctrl.Result, err error) {
+// reconcileMachines updates, rolls out and scales the control plane Machines. etcdStatuses is what the etcd health
+// check of this reconcile recorded on each Machine, which the scale-up preflight checks consult while a remediation
+// is in progress.
+func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, cluster *clusterv1.Cluster, tcp *controlplanev1.TalosControlPlane, machines *clusterv1.MachineList, etcdStatuses map[string]etcdMachineStatus) (res ctrl.Result, err error) {
 	logger := r.Log.WithValues("namespace", tcp.Namespace, "talosControlPlane", tcp.Name)
 
 	// If we've made it this far, we can assume that all ownedMachines are up to date
@@ -1034,6 +1064,8 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+
+	controlPlane.etcdStatuses = etcdStatuses
 
 	if err := r.reconcileMachineTemplateState(ctx, cluster, tcp, machines); err != nil {
 		return ctrl.Result{}, err
@@ -1236,6 +1268,7 @@ func patchTalosControlPlane(ctx context.Context, patchHelper *patch.Helper, tcp 
 			string(controlplanev1.MachinesAllReadyCondition),
 			string(controlplanev1.AvailableCondition),
 			string(controlplanev1.MachinesBootstrapped),
+			string(controlplanev1.RemediatingCondition),
 		}},
 	)
 

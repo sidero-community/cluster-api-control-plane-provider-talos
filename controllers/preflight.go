@@ -115,6 +115,103 @@ func (r *TalosControlPlaneReconciler) preflightChecks(
 	return &preflightFailure{message: strings.Join(failures, "; ")}
 }
 
+// preflightChecksForScaleUp runs the preflight checks for a scale-up. While a remediation is in
+// progress, that is between the deletion of the unhealthy machine and the creation of its
+// replacement, a control plane that fails the regular checks gets a second, narrower check that
+// only requires the replacement to be viable (see preflightChecksWhileRemediating), so that a
+// control plane with more than one failure can recover one machine at a time. Like KCP's
+// preflightChecks with checkHealthinessWhileRemediationInProgress. etcdStatuses is what the
+// etcd health check of this reconcile recorded on each machine.
+func (r *TalosControlPlaneReconciler) preflightChecksForScaleUp(
+	ctx context.Context,
+	tcp *controlplanev1.TalosControlPlane,
+	machines collections.Machines,
+	etcdStatuses map[string]etcdMachineStatus,
+) *preflightFailure {
+	failure := r.preflightChecks(ctx, tcp, machines)
+	if failure == nil || !remediationInProgress(tcp) {
+		return failure
+	}
+
+	// A deletion in flight is waited for in any case: one membership change at a time.
+	if machines.Filter(collections.HasDeletionTimestamp).Len() > 0 {
+		return failure
+	}
+
+	r.Log.Info("control plane failed the preflight checks while a remediation is in progress, checking whether the replacement machine can be created anyway",
+		"failures", failure.message)
+
+	if relaxed := r.preflightChecksWhileRemediating(ctx, tcp, machines, etcdStatuses); relaxed != nil {
+		return &preflightFailure{message: "remediation in progress, " + relaxed.message}
+	}
+
+	return nil
+}
+
+// preflightChecksWhileRemediating checks that the replacement of a remediated machine can be
+// created while the control plane is not fully healthy: at least one machine with a node has
+// every component healthy, for the replacement to join through, and etcd keeps quorum with one
+// more member, assumed unhealthy until it is promoted, judged from what the etcd health check
+// of this reconcile recorded. Machines without a node are not required here: a remediation only
+// starts when every machine is provisioned, and only deletions happen after that.
+func (r *TalosControlPlaneReconciler) preflightChecksWhileRemediating(
+	ctx context.Context,
+	tcp *controlplanev1.TalosControlPlane,
+	machines collections.Machines,
+	etcdStatuses map[string]etcdMachineStatus,
+) *preflightFailure {
+	var failures []string
+
+	sorted := machines.SortedByCreationTimestamp()
+
+	var (
+		joinable          bool
+		componentFailures []string
+	)
+
+	for _, machine := range sorted {
+		if !machine.Status.NodeRef.IsDefined() {
+			continue
+		}
+
+		if err := r.nodesHealthcheck(ctx, tcp, []clusterv1.Machine{*machine}); err != nil {
+			componentFailures = append(componentFailures, err.Error())
+
+			continue
+		}
+
+		joinable = true
+
+		break
+	}
+
+	if !joinable {
+		message := "no control plane machine has all its components healthy for the replacement to join through"
+		if len(componentFailures) > 0 {
+			message += ": " + strings.Join(componentFailures, "; ")
+		} else {
+			message += ": no machine has a corresponding Node"
+		}
+
+		failures = append(failures, message)
+	}
+
+	safe, details, err := canSafelyAddEtcdMember(sorted, etcdStatuses)
+
+	switch {
+	case err != nil:
+		failures = append(failures, "etcd cluster health could not be checked before adding a member: "+err.Error())
+	case !safe:
+		failures = append(failures, "adding an etcd member could result in etcd quorum loss: "+details)
+	}
+
+	if len(failures) == 0 {
+		return nil
+	}
+
+	return &preflightFailure{message: strings.Join(failures, "; ")}
+}
+
 // holdScaleOperation records why a scale operation is waiting -- on the Resized condition, in
 // the log and as an event on the TalosControlPlane -- and returns the result that retries it.
 func (r *TalosControlPlaneReconciler) holdScaleOperation(tcp *controlplanev1.TalosControlPlane, reason, summary string, failure *preflightFailure) ctrl.Result {
