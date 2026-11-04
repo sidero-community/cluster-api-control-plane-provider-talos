@@ -53,6 +53,32 @@ instead of `EtcdClusterUnhealthy` for every failure. The pre-terminate hook matc
 member by the same names.
 """
 
+[notes.remediation]
+    title = "MachineHealthCheck remediation"
+        description = """\
+Control plane Machines that a MachineHealthCheck hands to the control plane are now remediated, as
+KCP does: one at a time, only while removing the etcd member keeps quorum, and within the retry
+limits of the new `spec.remediation` block (`maxRetry`, `retryPeriodSeconds`,
+`minHealthyPeriodSeconds`), which default to 3 retries, 5 minutes apart, for replacements that
+fail within an hour. Remediation deletes the Machine and nothing else; the pre-terminate hook
+removes the etcd member and the regular scale-up creates the replacement, through a narrower
+preflight check while the remediation is in progress so that a control plane with more than one
+failure recovers one machine at a time. The quorum check reads the etcd statuses recorded by the
+health check of the same reconcile instead of probing etcd again. Remediation waits for a version
+upgrade pending from the cluster topology and for in-place updates; before the control plane is
+initialized it replaces a machine while nothing was bootstrapped, or a machine that never joined
+when another machine holds the bootstrapped etcd data.
+
+Why a machine waits is reported on its `OwnerRemediated` condition (`RemediationDeferred`,
+`CannotBeRemediated`), the latter also as a `CannotRemediateMachine` warning event on the
+TalosControlPlane; a remediated machine gets a `RemediatingMachine` event. The TalosControlPlane
+gains a `Remediating` condition and `status.lastRemediation`, as the KubeadmControlPlane has.
+
+The pre-terminate hook now identifies the etcd member of a machine that never registered a node
+by elimination, and releases the deletion right away instead of after the fail-open deadline when
+the member cannot be told apart; the quorum safeguard probes the remaining machines concurrently.
+"""
+
 [notes.flags]
     title = "Flags"
         description = """\

@@ -392,6 +392,107 @@ quorum hold:
 kubectl annotate machine <name> pre-terminate.delete.hook.machine.cluster.x-k8s.io/tcp-cleanup-
 ```
 
+#### Remediation
+
+A control plane `Machine` that a `MachineHealthCheck` hands to its owner (`HealthCheckSucceeded`
+and `OwnerRemediated` both `False`) is remediated the way KCP does it: the provider deletes the
+`Machine` and does nothing else. The etcd member leaves through the pre-terminate hook, quorum
+safeguard included, the core Machine controller deletes the `Node`, and the regular scale-up
+creates the replacement.
+
+Once the control plane is initialized, a machine is only remediated when:
+
+- no other remediation is in progress and the retry limits (below) allow it,
+- the cluster topology, if the `Cluster` has one, is not about to propagate a version upgrade,
+- no control plane machine is being updated in place, deleted or still provisioning,
+- the control plane has more than one machine, and
+- removing its etcd member keeps quorum.
+
+The quorum check reads what the etcd health check of the same reconcile recorded, without asking
+etcd again: the member list, and which machines run a healthy etcd service. Removing the member must
+be committed by a healthy majority of the current voting members, and the members left must still
+have a healthy majority. A learner blocks remediation until it is promoted, and a member that
+matches no machine counts as unhealthy. The pre-terminate hook checks quorum again, against fresh
+statuses, before the member actually leaves.
+
+Before the control plane is initialized those checks cannot run. A machine is still replaced while
+nothing was bootstrapped yet, since no etcd exists anywhere, and, once a machine was bootstrapped,
+when it never registered a `Node` and another machine is found to hold etcd data, so that the
+bootstrapped etcd survives whichever machine it lives on. The bootstrapped machine itself, failing
+before the API server comes up, needs an operator, as a single-replica control plane does.
+
+One machine is remediated at a time. When several are flagged, the provider picks the one with the
+`cluster.x-k8s.io/remediate-machine` annotation first, then one without a `Node`, then one whose
+etcd was not healthy, then the oldest. When a machine waits, its `OwnerRemediated` condition says
+why: `RemediationDeferred` for a transient state, `CannotBeRemediated` when etcd quorum, the retry
+limit or the bootstrap is at stake, which is also reported as a `CannotRemediateMachine` warning
+event on the `TalosControlPlane`. The `Remediating` condition of the `TalosControlPlane`
+aggregates the machines waiting for remediation, and `status.lastRemediation` records the last
+remediation performed.
+
+The remediation is recorded on the `TalosControlPlane` in the
+`controlplane.cluster.x-k8s.io/remediation-in-progress` annotation before the machine is deleted,
+and a `RemediatingMachine` event is recorded on the machine. The replacement inherits the record as
+`controlplane.cluster.x-k8s.io/remediation-for`, and the annotation goes away when the replacement
+is created; until then, no other machine is remediated. While the replacement is to be created, the
+scale-up runs a narrower preflight check than usual, as KCP does: not every machine has to be
+healthy, but at least one must have all its components healthy for the replacement to join through,
+and etcd must keep quorum with one more member. This is what lets a five-replica control plane
+recover from two failures when only one of them is flagged.
+
+The retry limits live in `spec.remediation`, with the same meaning as on the `KubeadmControlPlane`:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `maxRetry` | `3` | How many times a replacement that fails in turn is replaced again. |
+| `retryPeriodSeconds` | `300` | Minimum time between two retries. |
+| `minHealthyPeriodSeconds` | `3600` | How long a replacement must stay healthy for its own failure to start a new sequence instead of counting as a retry. |
+
+```yaml
+apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+kind: TalosControlPlane
+spec:
+  remediation:
+    maxRetry: 3
+    retryPeriodSeconds: 300
+    minHealthyPeriodSeconds: 3600
+```
+
+Two settings outside the provider matter as much:
+
+- A remediated machine may never finish draining. Cluster API only skips the drain when the node is
+  unreachable; a node whose kubelet still answers while its control plane is down drains until
+  `spec.machineTemplate.spec.deletion.nodeDrainTimeoutSeconds` expires, which is unlimited by
+  default. Set it, and `nodeVolumeDetachTimeoutSeconds`, so that the deletion reaches the
+  pre-terminate hook in bounded time.
+- A `MachineHealthCheck` stops flagging machines once more than `unhealthyLessThanOrEqualTo` of
+  them are unhealthy (100% by default). For a control plane check, `1` is the right value: with two
+  machines down at once, remediation would refuse to touch etcd anyway.
+
+```yaml
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: MachineHealthCheck
+metadata:
+  name: talos-control-plane
+spec:
+  clusterName: talos
+  selector:
+    matchLabels:
+      cluster.x-k8s.io/control-plane: ""
+  remediation:
+    triggerIf:
+      unhealthyLessThanOrEqualTo: 1
+  checks:
+    nodeStartupTimeoutSeconds: 600
+    unhealthyNodeConditions:
+      - type: Ready
+        status: Unknown
+        timeoutSeconds: 300
+      - type: Ready
+        status: "False"
+        timeoutSeconds: 300
+```
+
 #### etcd health
 
 The `EtcdClusterHealthy` condition comes from a check that inspects every control plane machine
