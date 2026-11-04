@@ -5,6 +5,12 @@ project_name = "CAPI Control Plane Provider Talos"
 github_repo = "sidero-community/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
+# The bootstrap provider is consumed through a replace directive that points at the fork, whose
+# module name differs from the require line's; the release tool cannot pair the two, would report
+# the stale require version, and resolves that version against the upstream repository. The
+# version in use is stated in the dependency notes instead.
+ignore_deps = ["github.com/siderolabs/cluster-api-bootstrap-provider-talos"]
+
 # previous release
 previous = "v0.9.0"
 
