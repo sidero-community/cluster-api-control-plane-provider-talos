@@ -50,8 +50,14 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	cosiv1alpha1 "github.com/cosi-project/runtime/api/v1alpha1"
+	"github.com/cosi-project/runtime/pkg/state"
+	"github.com/cosi-project/runtime/pkg/state/impl/inmem"
+	"github.com/cosi-project/runtime/pkg/state/impl/namespaced"
+	cosiserver "github.com/cosi-project/runtime/pkg/state/protobuf/server"
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	"github.com/siderolabs/cluster-api-control-plane-provider-talos/controllers"
+	"github.com/siderolabs/talos/pkg/machinery/resources/k8s"
 )
 
 var fakeScheme = runtime.NewScheme()
@@ -380,6 +386,21 @@ func startMachineServer(ctx context.Context, secretsBundle *secrets.Bundle) (*ma
 
 	machine.RegisterMachineServiceServer(machineServer, machineService)
 	storage.RegisterStorageServiceServer(machineServer, machineService)
+
+	// Talos' resource API, reporting the control plane static pods the health check reads as
+	// ready: the Kubernetes components are not Talos services.
+	resources := state.WrapCore(namespaced.NewState(inmem.Build))
+
+	for _, component := range []string{"kube-apiserver", "kube-controller-manager", "kube-scheduler"} {
+		status := k8s.NewStaticPodStatus(k8s.NamespaceName, "kube-system/"+component+"-fake")
+		status.TypedSpec().PodStatus = map[string]any{"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}
+
+		if err := resources.Create(ctx, status); err != nil {
+			return nil, "", err
+		}
+	}
+
+	cosiv1alpha1.RegisterStateServer(machineServer, cosiserver.NewState(resources))
 
 	go func() {
 		for {

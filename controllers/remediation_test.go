@@ -438,6 +438,24 @@ func TestRemediation_AFlaggedProvisioningMachineDoesNotDefer(t *testing.T) {
 	f.expectRemediated(t, "m1")
 }
 
+// The target's own in-place update is no reason to wait: deleting it stops the update, and a machine that an
+// update broke is exactly what remediation is for.
+func TestRemediation_RemediatesATargetUpdatingInPlace(t *testing.T) {
+	now := time.Now()
+	tcp := newRemediationTCP(3)
+
+	f := newPreTerminateFixtureWithTCP(t, tcp,
+		newRMMachine(tcp, "m1", now.Add(-3*time.Hour), rmFlagged, rmAnnotation(clusterv1.UpdateInProgressAnnotation, "")),
+		newRMMachine(tcp, "m2", now.Add(-2*time.Hour)),
+		newRMMachine(tcp, "m3", now.Add(-time.Hour)))
+
+	_, remediating, err := f.remediate(t, recordedEtcd([]string{"m1", "m2", "m3"}, "m1"))
+	require.NoError(t, err)
+	assert.True(t, remediating)
+
+	f.expectRemediated(t, "m1")
+}
+
 func TestRemediation_SkipsATargetAlreadyDeleting(t *testing.T) {
 	now := time.Now()
 	tcp := newRemediationTCP(3)

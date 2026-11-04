@@ -115,6 +115,18 @@ func (r *TalosControlPlaneReconciler) reconcileInPlaceUpdates(
 		return decision, nil
 	}
 
+	// And while the control plane components of every other machine are healthy, like KCP's
+	// preflight checks before a rollout: an update that left a kube-apiserver broken must not
+	// roll on to the next machine. The candidate itself is exempt, the update may be exactly
+	// what repairs it.
+	others := controlPlane.Machines.Filter(func(m *clusterv1.Machine) bool { return m.Name != candidate.Name })
+
+	if err := r.nodesHealthcheck(ctx, tcp, healthCheckable(machineList(others))); err != nil {
+		r.Log.WithValues("machine", klog.KObj(candidate)).Info("deferring in-place update, control plane components are not healthy", "error", err.Error())
+
+		return decision, nil
+	}
+
 	return r.offerInPlace(ctx, tcp, controlPlane, candidate)
 }
 

@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
+	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -240,6 +242,75 @@ func TestReconcileInPlaceUpdates_DefersWhileEtcdIsUnhealthy(t *testing.T) {
 	assert.Empty(t, decision.claimed)
 	assert.Empty(t, decision.rollout, "an unhealthy etcd must defer, not roll out")
 	assert.Zero(t, f.caller.calls)
+}
+
+// healthyControlPlane gives the fixture a second, up-to-date machine and fakes through which
+// etcd and the control plane components of both machines look healthy, so that the in-place
+// gates are passed; the fakes can then be degraded one at a time.
+func (f *inPlaceFixture) healthyControlPlane() (second *clusterv1.Machine, dialer *fakeEtcdDialer) {
+	second = f.addMachine("machine-2", nil)
+	members := etcdMembersFor("node-1", "node-machine-2")
+
+	// What a healthy etcd reports to the health check: running, healthy, with its events.
+	etcd := func() []talosclient.ServiceInfo {
+		return []talosclient.ServiceInfo{{Service: &machineapi.ServiceInfo{
+			Id:     "etcd",
+			State:  "Running",
+			Health: &machineapi.ServiceHealth{Healthy: true},
+			Events: &machineapi.ServiceEvents{Events: []*machineapi.ServiceEvent{{State: "Running", Msg: "Health check successful"}}},
+		}}}
+	}
+
+	dialer = newFakeEtcdDialer()
+	dialer.clients["machine-1"] = &fakeEtcdCalls{name: "node-1", services: etcd(), members: members, serviceList: healthyServices()}
+	dialer.clients["machine-2"] = &fakeEtcdCalls{name: "node-machine-2", services: etcd(), members: members, serviceList: healthyServices()}
+	f.reconciler.etcdDialer = dialer.dial
+
+	return second, dialer
+}
+
+// A control plane component that is not healthy on another machine defers the next in-place
+// update, as KCP's preflight checks hold a rollout: an update that left a kube-apiserver broken
+// must not roll on to the next machine.
+func TestReconcileInPlaceUpdates_DefersWhileComponentsAreUnhealthy(t *testing.T) {
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.InPlaceUpdates, true)
+
+	f := newInPlaceFixture(t, nil)
+	_, dialer := f.healthyControlPlane()
+	dialer.clients["machine-2"].staticPods = []staticPodStatus{
+		{id: "kube-system/kube-apiserver-node-machine-2", ready: false},
+		{id: "kube-system/kube-controller-manager-node-machine-2", ready: true},
+		{id: "kube-system/kube-scheduler-node-machine-2", ready: true},
+	}
+
+	decision, err := f.reconciler.reconcileInPlaceUpdates(
+		context.Background(), f.tcp, f.controlPlane, collections.FromMachines(f.machine))
+
+	require.NoError(t, err)
+	assert.Empty(t, decision.claimed)
+	assert.Empty(t, decision.rollout, "unhealthy components must defer, not roll out")
+	assert.Zero(t, f.caller.calls)
+}
+
+// The candidate's own components are not a reason to hold its update: the update may be
+// exactly what repairs them.
+func TestReconcileInPlaceUpdates_IgnoresTheCandidatesOwnComponents(t *testing.T) {
+	utilfeature.SetFeatureGateDuringTest(t, feature.Gates, feature.InPlaceUpdates, true)
+
+	f := newInPlaceFixture(t, nil)
+	_, dialer := f.healthyControlPlane()
+	dialer.clients["machine-1"].staticPods = []staticPodStatus{
+		{id: "kube-system/kube-apiserver-node-1", ready: false},
+	}
+
+	decision, err := f.reconciler.reconcileInPlaceUpdates(
+		context.Background(), f.tcp, f.controlPlane, collections.FromMachines(f.machine))
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"machine-1"}, decision.claimed.Names())
+	assert.Empty(t, decision.rollout)
+	assert.Equal(t, 1, f.caller.calls, "the extension is offered the candidate")
+	assert.Zero(t, dialer.clients["machine-1"].staticPodCalls, "the candidate's components are not consulted")
 }
 
 // A change the extension cannot absorb sends that machine, and only that machine, to the

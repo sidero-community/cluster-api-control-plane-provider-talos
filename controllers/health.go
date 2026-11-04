@@ -6,15 +6,19 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 	machineapi "github.com/siderolabs/talos/pkg/machinery/api/machine"
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
+	"github.com/siderolabs/talos/pkg/machinery/resources/k8s"
 	"google.golang.org/grpc/codes"
+	corev1 "k8s.io/api/core/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
@@ -45,8 +49,73 @@ func healthCheckable(machines []clusterv1.Machine) []clusterv1.Machine {
 	return out
 }
 
-// nodesHealthcheck fails on the first machine reporting a service that is known to be
-// unhealthy. Callers pass the machines they expect to be healthy (see healthCheckable).
+// staticPodStatus is what the health check needs from the kubelet's status of a static pod, as
+// Talos records it: the pod's "<namespace>/<name>", and whether it is Ready.
+type staticPodStatus struct {
+	id    string
+	ready bool
+}
+
+// controlPlaneComponents are the static pods Talos renders on a control plane node. The
+// kubelet names the pod it runs from each "<component>-<node name>".
+var controlPlaneComponents = []string{k8s.APIServerID, k8s.ControllerManagerID, k8s.SchedulerID}
+
+// controlPlaneComponentsError reports the first control plane component whose static pod the
+// kubelet does not run ready. Like KCP's control plane health check, every component has to be
+// there and Ready: Talos restarts kube-apiserver itself when the configuration changes what it
+// runs with, and a configuration it cannot start on is only visible here, not on the Talos
+// services.
+func controlPlaneComponentsError(statuses []staticPodStatus) error {
+	for _, component := range controlPlaneComponents {
+		prefix := "kube-system/" + component + "-"
+		found := false
+
+		for _, status := range statuses {
+			if !strings.HasPrefix(status.id, prefix) {
+				continue
+			}
+
+			found = true
+
+			if !status.ready {
+				return &errServiceUnhealthy{service: component, reason: "static pod is not ready"}
+			}
+		}
+
+		if !found {
+			return &errServiceUnhealthy{service: component, reason: "static pod not found"}
+		}
+	}
+
+	return nil
+}
+
+// staticPodReady reads the Ready condition out of the PodStatus Talos stores on a
+// StaticPodStatus resource, which is the kubelet's PodStatus as a generic map.
+func staticPodReady(podStatus map[string]any) (bool, error) {
+	encoded, err := json.Marshal(podStatus)
+	if err != nil {
+		return false, fmt.Errorf("failed to encode the pod status: %w", err)
+	}
+
+	var status corev1.PodStatus
+
+	if err := json.Unmarshal(encoded, &status); err != nil {
+		return false, fmt.Errorf("failed to decode the pod status: %w", err)
+	}
+
+	for _, condition := range status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status == corev1.ConditionTrue, nil
+		}
+	}
+
+	return false, nil
+}
+
+// nodesHealthcheck fails on the first machine reporting a service, or a control plane static
+// pod, that is known to be unhealthy. Callers pass the machines they expect to be healthy (see
+// healthCheckable).
 func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines []clusterv1.Machine) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
 	defer cancel()
@@ -76,7 +145,14 @@ func (r *TalosControlPlaneReconciler) nodesHealthcheck(ctx context.Context, tcp 
 				}
 			}
 
-			return nil
+			// The Kubernetes control plane components are static pods the kubelet runs, not
+			// Talos services: their health is the kubelet's view of them.
+			statuses, err := client.StaticPodStatuses(ctx)
+			if err != nil {
+				return err
+			}
+
+			return controlPlaneComponentsError(statuses)
 		}(); err != nil {
 			return fmt.Errorf("machine %q: %w", machine.Name, err)
 		}

@@ -39,12 +39,15 @@ type fakeEtcdCalls struct {
 	serviceInfoErr error
 	serviceList    *machineapi.ServiceListResponse
 	serviceListErr error
+	staticPods     []staticPodStatus
+	staticPodsErr  error
 	forfeitErr     error
 	leaveErr       error
 	removeErr      error
 
 	serviceInfoCalls int
 	serviceListCalls int
+	staticPodCalls   int
 	memberListCalls  int
 	forfeitCalls     int
 	leaveCalls       int
@@ -64,6 +67,31 @@ func (f *fakeEtcdCalls) ServiceList(_ context.Context, _ ...grpc.CallOption) (*m
 	}
 
 	return f.serviceList, nil
+}
+
+// StaticPodStatuses reports the configured static pods, or every control plane component ready
+// when none were configured.
+func (f *fakeEtcdCalls) StaticPodStatuses(_ context.Context) ([]staticPodStatus, error) {
+	f.staticPodCalls++
+
+	if f.staticPodsErr != nil {
+		return nil, f.staticPodsErr
+	}
+
+	if f.staticPods == nil {
+		return readyControlPlaneStaticPods(f.name), nil
+	}
+
+	return f.staticPods, nil
+}
+
+// readyControlPlaneStaticPods is what a control plane node whose components are all up reports.
+func readyControlPlaneStaticPods(node string) []staticPodStatus {
+	return []staticPodStatus{
+		{id: "kube-system/kube-apiserver-" + node, ready: true},
+		{id: "kube-system/kube-controller-manager-" + node, ready: true},
+		{id: "kube-system/kube-scheduler-" + node, ready: true},
+	}
 }
 
 func (f *fakeEtcdCalls) ServiceInfo(_ context.Context, _ string, _ ...grpc.CallOption) ([]talosclient.ServiceInfo, error) {

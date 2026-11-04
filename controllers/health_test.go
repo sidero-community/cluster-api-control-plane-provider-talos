@@ -6,11 +6,13 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -56,4 +58,57 @@ func TestReconcileNodeHealth_ReportsAnUnhealthyService(t *testing.T) {
 	assert.Equal(t, controlplanev1.ControlPlaneComponentsUnhealthyReason, cond.Reason)
 	assert.Contains(t, cond.Message, `machine "cp-2"`)
 	assert.Contains(t, cond.Message, "kubelet")
+}
+
+func TestControlPlaneComponentsError(t *testing.T) {
+	ready := readyControlPlaneStaticPods("cp-1")
+
+	assert.NoError(t, controlPlaneComponentsError(ready))
+
+	withExtra := append([]staticPodStatus{{id: "kube-system/kube-proxy-cp-1", ready: false}}, ready...)
+	assert.NoError(t, controlPlaneComponentsError(withExtra), "only the control plane components count")
+
+	missing := ready[1:]
+	err := controlPlaneComponentsError(missing)
+	require.Error(t, err)
+	assert.EqualError(t, err, "Service kube-apiserver is unhealthy: static pod not found")
+
+	notReady := []staticPodStatus{ready[0], ready[1], {id: ready[2].id, ready: false}}
+	err = controlPlaneComponentsError(notReady)
+	require.Error(t, err)
+	assert.EqualError(t, err, "Service kube-scheduler is unhealthy: static pod is not ready")
+
+	assert.EqualError(t, controlPlaneComponentsError(nil), "Service kube-apiserver is unhealthy: static pod not found")
+}
+
+// Talos records the kubelet's PodStatus on the resource as a generic map, as JSON encodes it.
+func TestStaticPodReady(t *testing.T) {
+	encode := func(t *testing.T, status corev1.PodStatus) map[string]any {
+		t.Helper()
+
+		data, err := json.Marshal(status)
+		require.NoError(t, err)
+
+		var out map[string]any
+
+		require.NoError(t, json.Unmarshal(data, &out))
+
+		return out
+	}
+
+	ready, err := staticPodReady(encode(t, corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}))
+	require.NoError(t, err)
+	assert.True(t, ready)
+
+	ready, err = staticPodReady(encode(t, corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}}}))
+	require.NoError(t, err)
+	assert.False(t, ready)
+
+	ready, err = staticPodReady(encode(t, corev1.PodStatus{Phase: corev1.PodPending}))
+	require.NoError(t, err)
+	assert.False(t, ready, "no Ready condition means not ready")
+
+	ready, err = staticPodReady(nil)
+	require.NoError(t, err)
+	assert.False(t, ready)
 }

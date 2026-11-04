@@ -82,6 +82,26 @@ func TestPreflight_RequiresANodeForEveryMachine(t *testing.T) {
 	assert.NotContains(t, f.dialer.dialed, "cp-2", "a machine without a node is not asked about its services")
 }
 
+// The Kubernetes control plane components are static pods, not Talos services: a kube-apiserver
+// that cannot start on its configuration is only visible through the kubelet's view of it.
+func TestPreflight_RequiresControlPlaneStaticPods(t *testing.T) {
+	tcp := newPreTerminateTCP()
+	ptEtcdHealthy(tcp)
+
+	f := newPreTerminateFixtureWithTCP(t, tcp, newPTMachine(tcp, "cp-1", ptHooked), newPTMachine(tcp, "cp-2", ptHooked))
+	f.dialer.clients["cp-1"] = &fakeEtcdCalls{name: "cp-1", serviceList: healthyServices()}
+	f.dialer.clients["cp-2"] = &fakeEtcdCalls{name: "cp-2", serviceList: healthyServices(), staticPods: []staticPodStatus{
+		{id: "kube-system/kube-apiserver-cp-2", ready: false},
+		{id: "kube-system/kube-controller-manager-cp-2", ready: true},
+		{id: "kube-system/kube-scheduler-cp-2", ready: true},
+	}}
+
+	failure := f.r.preflightChecks(context.Background(), f.tcp, f.collection())
+	require.NotNil(t, failure)
+
+	assert.Contains(t, failure.message, `machine "cp-2": Service kube-apiserver is unhealthy: static pod is not ready`)
+}
+
 func TestPreflight_RequiresHealthyComponents(t *testing.T) {
 	tcp := newPreTerminateTCP()
 	ptEtcdHealthy(tcp)

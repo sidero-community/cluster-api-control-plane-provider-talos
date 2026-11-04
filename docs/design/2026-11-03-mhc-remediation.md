@@ -315,6 +315,14 @@ out of the implementation:
   a machine without a node is replaced; otherwise `CannotBeRemediated`. A flagged machine that has
   a node while the control plane is not yet observed initialized is deferred, not refused:
   initialization is imminent.
+- **D4, the target's own update** (2026-11-04). Remediation defers only for another machine's
+  in-place update, no longer for the flagged machine's own: deleting the target stops its
+  update, since Cluster API stops calling the hook for a deleting Machine and the bootstrap
+  provider's extension (after v0.9.1) cancels a running Talos upgrade when it sees the
+  deletion, and a machine that an update broke is exactly what remediation is for. Alongside,
+  the control plane health check now covers the control plane static pods through the
+  kubelet's view of them, and the next in-place update waits for them to be ready on every
+  other machine, as KCP's preflight checks hold a rollout.
 - **No scale-down gate.** The port held every scale-down while `remediation-in-progress` was set.
   With D2's lifetime the annotation only exists while the remediated machine is deleting (the
   preflight checks already hold scale-down then) or while the control plane is short of a machine

@@ -255,11 +255,13 @@ func (r *TalosControlPlaneReconciler) reconcileUnhealthyMachines(
 		return ctrl.Result{}, false, nil
 	}
 
-	// An in-place update is a transitional state like provisioning: the machine being updated has its components
-	// restarted or its node rebooted, and remediating a machine mid-update, the updated one included, would need the
-	// update to be cancelled first.
+	// An in-place update of another machine is a transitional state like provisioning: that machine has its
+	// components restarted or its node rebooted. The target's own update is no reason to wait: deleting the target
+	// stops it, since Cluster API stops calling the hook for a deleting Machine and the bootstrap provider's
+	// extension cancels a Talos upgrade when it sees the deletion, and a machine that an update broke is exactly
+	// what remediation is for.
 	for _, m := range machines {
-		if isUpdatingInPlace(m) {
+		if m.Name != target.Name && isUpdatingInPlace(m) {
 			setOwnerRemediated(remediationDeferredReason, fmt.Sprintf("TalosControlPlane waiting for the in-place update of control plane machine %s to complete before triggering remediation", m.Name))
 
 			return ctrl.Result{}, false, nil
