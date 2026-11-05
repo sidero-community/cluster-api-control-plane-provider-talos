@@ -5,6 +5,12 @@ project_name = "CAPI Control Plane Provider Talos"
 github_repo = "sidero-community/cluster-api-control-plane-provider-talos"
 match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 
+# The bootstrap provider is consumed through a replace directive that points at the fork, whose
+# module name differs from the require line's; the release tool cannot pair the two, would report
+# the stale require version, and resolves that version against the upstream repository. The
+# version in use is stated in the dependency notes instead.
+ignore_deps = ["github.com/siderolabs/cluster-api-bootstrap-provider-talos"]
+
 # previous release
 previous = "v0.9.0"
 
@@ -14,6 +20,33 @@ preface = """\
 """
 
 [notes]
+
+[notes.bootstrap]
+    title = "Bootstrapping a new control plane"
+        description = """\
+A new control plane with more than one replica now comes up. Since v0.9.0 the scale-up waited
+for preflight checks that need a node on every machine, while the Talos bootstrap request was
+only sent once every replica existed, so a fresh control plane stopped at its first machine;
+control planes that were already bootstrapped were not affected. As in the Kubeadm Control
+Plane provider, the first machine is now bootstrapped as soon as it reports an address and
+before any other machine is created, and the remaining replicas join one at a time behind the
+preflight checks.
+
+Every reachable machine is first checked for an etcd data directory, and a machine that has
+one is recorded instead of bootstrapped; nothing is bootstrapped while a reachable machine
+cannot be asked, and an initialized control plane is never bootstrapped. The new
+`status.bootstrappedMachine` records the machine, the way the Kubeadm bootstrap provider's init
+lock records the init machine: should that Machine be gone before the control plane is
+initialized, the machine holding the etcd data is recorded, or another machine is bootstrapped
+when none does. The control plane is not reported initialized while its only machine is being
+deleted or handed over for remediation, a new `Initialized` condition mirrors
+`status.initialization.controlPlaneInitialized`, and `FailedInitialization` and `FailedScaleUp`
+events report machine creation failures.
+
+This release was re-published on 2026-11-05 with this fix. The artifacts first published as
+v0.10.0 could not create a control plane with more than one replica.
+"""
+
 
 [notes.failuredomains]
     title = "Failure Domain Spreading"
