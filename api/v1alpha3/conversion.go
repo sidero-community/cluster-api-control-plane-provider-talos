@@ -82,6 +82,7 @@ func (src *TalosControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 		dst.Status.AvailableReplicas = restored.Status.AvailableReplicas
 		dst.Status.UpToDateReplicas = restored.Status.UpToDateReplicas
 		dst.Status.LastRemediation = restored.Status.LastRemediation
+		dst.Status.BootstrappedMachine = restored.Status.BootstrappedMachine
 	}
 
 	return nil

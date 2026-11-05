@@ -319,6 +319,35 @@ picked and the domains that were eligible, and says so when the cluster reports 
 or fewer than the desired replicas, since a control plane that cannot be spread is a property of
 the infrastructure provider rather than of this controller.
 
+### Bootstrapping the first machine
+
+A Talos control plane starts with one explicit step that kubeadm-based control planes get from
+`kubeadm init`: one node has to receive the Talos bootstrap request, which starts etcd on it, and
+every other node joins that etcd. The provider follows the Kubeadm Control Plane provider's order
+of operations around it:
+
+1. With no machines, the first machine is created, without preflight checks — there is nothing
+   to protect yet.
+2. As soon as that machine reports an address, and before any other machine is created, it is
+   bootstrapped. The provider first checks every reachable machine for an etcd data directory:
+   a machine that has one was bootstrapped already (the controller may have restarted between
+   the request and the status update, or the objects may have been moved with `clusterctl move`)
+   and is recorded instead, and while a reachable machine cannot be asked nothing is
+   bootstrapped, since two bootstrapped machines are two etcd clusters.
+3. `status.bootstrappedMachine` records the machine, the way the Kubeadm bootstrap provider's
+   init lock records the init machine. Should that `Machine` be gone before the control plane is
+   initialized, the lock is released: the machine found to hold etcd data is recorded, and when
+   no remaining machine holds any, another machine is bootstrapped. The release waits until every
+   remaining machine reports an address and could be asked.
+4. The remaining replicas are created one at a time by the regular scale-up, whose preflight
+   checks wait for the previous machine's node, healthy components and a healthy etcd — exactly
+   as KCP waits for `kubeadm init` and each `kubeadm join` to complete.
+5. The control plane is reported initialized (`status.initialization.controlPlaneInitialized`
+   and the `Initialized` condition) once the API server answers through the control plane
+   endpoint, and never un-initialized. Like KCP, it is not reported initialized while its only
+   machine is being deleted or has been handed over for remediation, so that a cluster is never
+   initialized with no machine left to bootstrap from.
+
 ### Machine deletion and etcd
 
 Control plane `Machine` deletion follows the Kubeadm Control Plane provider's pattern, on every

@@ -6,6 +6,6 @@ package controllers
 
 // Unexported reconciler steps exposed to the external test package.
 var (
-	BootstrapCluster = (*TalosControlPlaneReconciler).bootstrapCluster
-	EtcdHealthcheck  = (*TalosControlPlaneReconciler).etcdHealthcheck
+	ReconcileBootstrap = (*TalosControlPlaneReconciler).reconcileBootstrap
+	EtcdHealthcheck    = (*TalosControlPlaneReconciler).etcdHealthcheck
 )

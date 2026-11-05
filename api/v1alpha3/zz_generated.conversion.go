@@ -361,6 +361,7 @@ func autoConvert_v1beta1_TalosControlPlaneStatus_To_v1alpha3_TalosControlPlaneSt
 	out.Version = (*string)(unsafe.Pointer(in.Version))
 	out.ObservedGeneration = in.ObservedGeneration
 	out.Bootstrapped = in.Bootstrapped
+	// WARNING: in.BootstrappedMachine requires manual conversion: does not exist in peer-type
 	// WARNING: in.LastRemediation requires manual conversion: does not exist in peer-type
 	return nil
 }

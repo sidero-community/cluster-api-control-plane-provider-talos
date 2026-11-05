@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
 )
@@ -231,9 +232,14 @@ func (r *TalosControlPlaneReconciler) holdScaleOperation(tcp *controlplanev1.Tal
 
 // recordControlPlaneEvent records an event on the TalosControlPlane, if a recorder is wired up.
 func (r *TalosControlPlaneReconciler) recordControlPlaneEvent(tcp *controlplanev1.TalosControlPlane, eventType, reason, message string) {
+	r.recordEvent(tcp, eventType, reason, "Preflight", message)
+}
+
+// recordEvent records an event on obj, when a recorder is configured.
+func (r *TalosControlPlaneReconciler) recordEvent(obj client.Object, eventType, reason, action, message string) {
 	if r.Recorder == nil {
 		return
 	}
 
-	r.Recorder.Eventf(tcp, nil, eventType, reason, "Preflight", "%s", message)
+	r.Recorder.Eventf(obj, nil, eventType, reason, action, "%s", message)
 }
