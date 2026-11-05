@@ -993,9 +993,5 @@ func setLastRemediation(tcp *controlplanev1.TalosControlPlane, machines collecti
 
 // recordRemediationEvent records an event of the remediation on the object, if a recorder is wired up.
 func (r *TalosControlPlaneReconciler) recordRemediationEvent(obj client.Object, eventType, reason, message string) {
-	if r.Recorder == nil {
-		return
-	}
-
-	r.Recorder.Eventf(obj, nil, eventType, reason, "Remediate", "%s", message)
+	r.recordEvent(obj, eventType, reason, "Remediate", message)
 }

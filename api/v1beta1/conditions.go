@@ -27,6 +27,11 @@ const (
 
 	// MachinesBootstrappedReason documents that all control plane machines have been bootstrapped.
 	MachinesBootstrappedReason = "MachinesBootstrapped"
+
+	// BootstrappedMachineGoneReason documents that the machine that received the bootstrap request is
+	// gone before the control plane was initialized, and that another machine is bootstrapped once it
+	// is known that no remaining machine holds the etcd data.
+	BootstrappedMachineGoneReason = "BootstrappedMachineGone"
 )
 
 const (
@@ -44,6 +49,18 @@ const (
 
 	// AvailableReason documents that the TalosControlPlane is available.
 	AvailableReason = "Available"
+
+	// InitializedCondition documents whether the control plane is initialized: whether the Kubernetes
+	// API server answers through the control plane endpoint, which only happens once the bootstrapped
+	// machine runs etcd and the API server. Like the Kubeadm Control Plane provider's Initialized
+	// condition it never goes back to False once True.
+	InitializedCondition = "Initialized"
+
+	// InitializedReason surfaces when the control plane is initialized.
+	InitializedReason = "Initialized"
+
+	// NotInitializedReason surfaces when the control plane is not yet initialized.
+	NotInitializedReason = "NotInitialized"
 )
 
 const (

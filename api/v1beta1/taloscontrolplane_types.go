@@ -312,6 +312,15 @@ type TalosControlPlaneStatus struct {
 	// +optional
 	Bootstrapped bool `json:"bootstrapped,omitempty"`
 
+	// bootstrappedMachine is the name of the control plane Machine that received the bootstrap
+	// request, the one whose etcd the other machines join. Until the control plane is
+	// initialized it plays the part of the Kubeadm bootstrap provider's init lock: no other
+	// machine is bootstrapped while it exists, and another machine is bootstrapped should it be
+	// gone before the control plane is initialized.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	BootstrappedMachine string `json:"bootstrappedMachine,omitempty"`
+
 	// lastRemediation stores info about the last remediation performed: the one in progress, if
 	// any, or the most recent one recorded on a Machine the TalosControlPlane created.
 	// +optional
