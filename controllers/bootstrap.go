@@ -67,9 +67,27 @@ func (r *TalosControlPlaneReconciler) initializeControlPlane(ctx context.Context
 //     remaining machines are checked for etcd data, the machine holding it is recorded, and
 //     when none does another machine is bootstrapped. Once the control plane is initialized the
 //     record only informs; the regular etcd checks protect the cluster from then on.
+//   - Like KCP, which never runs its init path once the control plane is initialized, an
+//     initialized control plane is never bootstrapped: if it is not recorded as bootstrapped
+//     (its status was lost), it is recorded as such without asking any node.
 //
 // It returns a non-zero result while the bootstrap is pending.
 func (r *TalosControlPlaneReconciler) reconcileBootstrap(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines []clusterv1.Machine) (ctrl.Result, error) {
+	if !tcp.Status.Bootstrapped && ptr.Deref(tcp.Status.Initialization.ControlPlaneInitialized, false) {
+		r.Log.Info("the control plane is initialized, recording it as bootstrapped")
+
+		tcp.Status.Bootstrapped = true
+
+		conditions.Set(tcp, metav1.Condition{
+			Type:    string(controlplanev1.MachinesBootstrapped),
+			Status:  metav1.ConditionTrue,
+			Reason:  controlplanev1.MachinesBootstrappedReason,
+			Message: "The control plane is initialized",
+		})
+
+		return ctrl.Result{}, nil
+	}
+
 	if tcp.Status.Bootstrapped {
 		if ptr.Deref(tcp.Status.Initialization.ControlPlaneInitialized, false) || tcp.Status.BootstrappedMachine == "" {
 			return ctrl.Result{}, nil

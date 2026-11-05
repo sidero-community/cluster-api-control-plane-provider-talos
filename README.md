@@ -338,7 +338,9 @@ of operations around it:
    init lock records the init machine. Should that `Machine` be gone before the control plane is
    initialized, the lock is released: the machine found to hold etcd data is recorded, and when
    no remaining machine holds any, another machine is bootstrapped. The release waits until every
-   remaining machine reports an address and could be asked.
+   remaining machine reports an address and could be asked. An initialized control plane is
+   never bootstrapped, as KCP never runs its init path once initialized: one whose status lost
+   the record is simply recorded as bootstrapped again.
 4. The remaining replicas are created one at a time by the regular scale-up, whose preflight
    checks wait for the previous machine's node, healthy components and a healthy etcd — exactly
    as KCP waits for `kubeadm init` and each `kubeadm join` to complete.

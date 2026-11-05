@@ -355,6 +355,30 @@ func TestReconcileBootstrap_WhenTheBootstrappedMachineIsGone(t *testing.T) {
 	})
 }
 
+// Like KCP, which never runs its init path once the control plane is initialized: an initialized
+// control plane whose bootstrap record was lost is recorded as bootstrapped, and no node is asked
+// or bootstrapped, so that a probe that fails cannot hold its rollouts.
+func TestReconcileBootstrap_NeverBootstrapsAnInitializedControlPlane(t *testing.T) {
+	now := time.Now()
+	tcp := newPreTerminateTCP()
+	tcp.Status.Initialization.ControlPlaneInitialized = new(true)
+
+	bf := newBootstrapFixture(t, tcp,
+		newRMMachine(tcp, "m1", now.Add(-2*time.Hour)),
+		newRMMachine(tcp, "m2", now.Add(-time.Hour)))
+	bf.dataErr["m1"] = errors.New("connection refused")
+	bf.dataErr["m2"] = errors.New("connection refused")
+
+	result, err := bf.run()
+	require.NoError(t, err)
+
+	assert.True(t, result.IsZero())
+	assert.Empty(t, bf.asked)
+	assert.Empty(t, bf.bootstrapped)
+	assert.True(t, bf.tcp.Status.Bootstrapped)
+	assert.True(t, conditions.IsTrue(bf.tcp, string(controlplanev1.MachinesBootstrapped)))
+}
+
 func TestBootstrapCandidates(t *testing.T) {
 	now := time.Now()
 	tcp := newPreTerminateTCP()
