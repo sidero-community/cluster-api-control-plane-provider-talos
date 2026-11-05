@@ -794,6 +794,153 @@ func (suite *ControllersSuite) TestUppercaseHostnames() {
 	g.Expect(len(removedMachines)).To(BeEquivalentTo(0), "unexpected etcd remove member requests count was called")
 }
 
+// A node can only register once the bootstrapped machine runs etcd and the API server, which
+// the simulated infrastructure of the other tests glosses over by handing every Machine a Node
+// the moment it exists. With that dependency modelled, the first machine has to be bootstrapped
+// before the scale-up preflight checks can ever pass, and it has to be bootstrapped exactly once.
+func (suite *ControllersSuite) TestBootstrapsTheFirstMachineBeforeScalingUp() {
+	fakeClient := newFakeClient()
+	cluster, tcp, _ := suite.setupCluster(fakeClient, "test-bootstrap-first", ptr.To[int32](3))
+
+	g := NewWithT(suite.T())
+
+	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
+
+	// The first reconcile adds the finalizer; the second creates the first machine, with
+	// nothing else to go on: that is the machine that has to be bootstrapped.
+	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result).To(Equal(ctrl.Result{}))
+
+	_, err = r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+	g.Expect(err).NotTo(HaveOccurred())
+
+	initial := suite.getMachines(fakeClient, cluster)
+	g.Expect(initial).To(HaveLen(1), "the control plane is initialized with a single machine")
+	first := initial[0].Name
+
+	var eg errgroup.Group
+
+	ctx, cancel := context.WithTimeout(suite.ctx, time.Minute)
+	defer cancel()
+
+	eg.Go(func() error {
+		suite.runBootstrapAwareUpdater(ctx, fakeClient, cluster)
+
+		return nil
+	})
+
+	g.Eventually(func(g Gomega) {
+		_, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
+		g.Expect(err).NotTo(HaveOccurred())
+
+		suite.markMachinesReady(g, fakeClient, cluster.Namespace)
+
+		g.Expect(r.APIReader.Get(suite.ctx, util.ObjectKey(tcp), tcp)).To(Succeed())
+		g.Expect(tcp.Status.Replicas).To(BeEquivalentTo(3))
+		g.Expect(tcp.Status.ReadyReplicas).To(BeEquivalentTo(3))
+	}, 15*time.Second).Should(Succeed())
+
+	cancel()
+	g.Expect(eg.Wait()).To(Succeed())
+
+	machines := suite.getMachines(fakeClient, cluster)
+	g.Expect(machines).To(HaveLen(3))
+
+	g.Expect(tcp.Status.Bootstrapped).To(BeTrue())
+	g.Expect(tcp.Status.BootstrappedMachine).To(Equal(first), "the first machine is the bootstrapped one")
+	g.Expect(conditions.IsTrue(tcp, string(controlplanev1.MachinesBootstrapped))).To(BeTrue())
+	g.Expect(conditions.IsTrue(tcp, string(controlplanev1.InitializedCondition))).To(BeTrue())
+
+	bootstrapCalls := 0
+
+	for _, m := range machines {
+		ms, ok := suite.machineServices[m.Status.Addresses[0].Address]
+		g.Expect(ok).To(BeTrue())
+
+		calls := ms.getBootstrapCalls()
+		bootstrapCalls += calls
+
+		if m.Name == first {
+			g.Expect(calls).To(Equal(1), "the first machine receives the bootstrap request")
+		} else {
+			g.Expect(calls).To(BeZero(), "a joining machine is never bootstrapped")
+		}
+	}
+
+	g.Expect(bootstrapCalls).To(Equal(1))
+}
+
+// runBootstrapAwareUpdater plays the infrastructure and the nodes: a machine gets an address as
+// soon as it exists, but registers a node only once some machine received the bootstrap request,
+// as real nodes can only register with an API server that runs.
+func (suite *ControllersSuite) runBootstrapAwareUpdater(ctx context.Context, fakeClient client.Client, cluster *clusterv1.Cluster) {
+	g := NewWithT(suite.T())
+
+	ticker := time.NewTicker(time.Millisecond * 100)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			machines := suite.getMachines(fakeClient, cluster)
+
+			bootstrapped := false
+
+			for _, machine := range machines {
+				if len(machine.Status.Addresses) == 0 {
+					continue
+				}
+
+				if ms, ok := suite.machineServices[machine.Status.Addresses[0].Address]; ok && ms.getBootstrapCalls() > 0 {
+					bootstrapped = true
+				}
+			}
+
+			for _, machine := range machines {
+				if len(machine.Status.Addresses) == 0 {
+					_, address := suite.startMachineServer()
+
+					patchHelper, err := patch.NewHelper(&machine, fakeClient)
+					g.Expect(err).To(BeNil())
+
+					machine.Status.Addresses = []clusterv1.MachineAddress{{Address: address, Type: clusterv1.MachineInternalIP}}
+
+					g.Expect(patchHelper.Patch(suite.ctx, &machine)).To(Succeed())
+
+					// The cluster secrets exist after the first machine; the endpoints the
+					// provider dials come from the machine addresses, not from the secret.
+					_ = createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, address)
+
+					continue
+				}
+
+				if !machine.Status.NodeRef.IsDefined() {
+					if !bootstrapped {
+						continue
+					}
+
+					patchHelper, err := patch.NewHelper(&machine, fakeClient)
+					g.Expect(err).To(BeNil())
+
+					machine.Status.NodeRef = clusterv1.MachineNodeReference{Name: machine.Name}
+
+					g.Expect(patchHelper.Patch(suite.ctx, &machine)).To(Succeed())
+					g.Expect(fakeClient.Create(ctx, createNode(&machine, true))).To(Succeed())
+				}
+
+				address := machine.Status.Addresses[0].Address
+
+				suite.setEtcdRunning(address)
+				suite.updateEtcdMembers(fakeClient, cluster)
+				suite.addBootEvents(fakeClient, cluster)
+			}
+		}
+	}
+}
+
 func (suite *ControllersSuite) runUpdater(ctx context.Context, fakeClient client.Client, cluster *clusterv1.Cluster) {
 	g := NewWithT(suite.T())
 

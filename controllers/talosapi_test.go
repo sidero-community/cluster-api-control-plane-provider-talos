@@ -30,8 +30,12 @@ func (suite *ControllersSuite) TestBootstrapSkipsAClusterWithEtcdData() {
 	g.Expect(fakeClient.Create(suite.ctx, n)).To(Succeed())
 	g.Expect(createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, machineAddress)).To(Succeed())
 
-	g.Expect(controllers.BootstrapCluster(r, suite.ctx, tcp, []clusterv1.Machine{*m})).To(Succeed())
+	result, err := controllers.ReconcileBootstrap(r, suite.ctx, tcp, []clusterv1.Machine{*m})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.IsZero()).To(BeTrue())
 	g.Expect(machineService.getBootstrapCalls()).To(BeZero())
+	g.Expect(tcp.Status.Bootstrapped).To(BeTrue(), "the machine holding etcd data is taken as bootstrapped")
+	g.Expect(tcp.Status.BootstrappedMachine).To(Equal("bootstrapped-machine"))
 }
 
 // TestBootstrapBootstrapsAClusterWithoutEtcdData: with no etcd data on any node, Bootstrap is
@@ -50,7 +54,17 @@ func (suite *ControllersSuite) TestBootstrapBootstrapsAClusterWithoutEtcdData() 
 	g.Expect(fakeClient.Create(suite.ctx, n)).To(Succeed())
 	g.Expect(createSecrets(suite.ctx, fakeClient, cluster, suite.secretsBundle, machineAddress)).To(Succeed())
 
-	g.Expect(controllers.BootstrapCluster(r, suite.ctx, tcp, []clusterv1.Machine{*m})).To(Succeed())
+	result, err := controllers.ReconcileBootstrap(r, suite.ctx, tcp, []clusterv1.Machine{*m})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.IsZero()).To(BeTrue())
+	g.Expect(machineService.getBootstrapCalls()).To(Equal(1))
+	g.Expect(tcp.Status.Bootstrapped).To(BeTrue())
+	g.Expect(tcp.Status.BootstrappedMachine).To(Equal("fresh-machine"))
+
+	// Bootstrapped is sticky: a second look does not send the request again.
+	result, err = controllers.ReconcileBootstrap(r, suite.ctx, tcp, []clusterv1.Machine{*m})
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(result.IsZero()).To(BeTrue())
 	g.Expect(machineService.getBootstrapCalls()).To(Equal(1))
 }
 

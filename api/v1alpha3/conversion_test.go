@@ -167,3 +167,21 @@ func TestControlPlaneStatusConvertFromDerivesTheLegacyFields(t *testing.T) {
 	require.Nil(t, spoke.Status.FailureReason)
 	require.Equal(t, Conditions{{Type: "Available", Status: corev1.ConditionTrue, Reason: "Available", LastTransitionTime: transition}}, spoke.Status.Conditions)
 }
+
+// status.bootstrappedMachine exists only in the hub: it rides the conversion-data annotation
+// through v1alpha3, as the remediation fields do.
+func TestTalosControlPlaneRoundTripPreservesBootstrappedMachine(t *testing.T) {
+	hub := &cpv1beta1.TalosControlPlane{
+		ObjectMeta: metav1.ObjectMeta{Name: "tcp", Namespace: "default"},
+		Status:     cpv1beta1.TalosControlPlaneStatus{Bootstrapped: true, BootstrappedMachine: "cp-1"},
+	}
+
+	spoke := &TalosControlPlane{}
+	require.NoError(t, spoke.ConvertFrom(hub))
+	require.True(t, spoke.Status.Bootstrapped)
+
+	restored := &cpv1beta1.TalosControlPlane{}
+	require.NoError(t, spoke.ConvertTo(restored))
+	require.True(t, restored.Status.Bootstrapped)
+	require.Equal(t, "cp-1", restored.Status.BootstrappedMachine)
+}

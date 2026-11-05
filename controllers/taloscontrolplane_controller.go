@@ -11,7 +11,6 @@ import (
 	"io"
 	"math/rand"
 	"reflect"
-	"sort"
 	"strings"
 	"time"
 
@@ -22,7 +21,6 @@ import (
 	talosclient "github.com/siderolabs/talos/pkg/machinery/client"
 	"github.com/siderolabs/talos/pkg/machinery/constants"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -76,6 +74,14 @@ type TalosControlPlaneReconciler struct {
 	// etcdDialer overrides how Talos clients are opened for etcd operations. Nil in production,
 	// where talosconfigForMachines is used; tests set it to inject a fake.
 	etcdDialer func(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines ...clusterv1.Machine) (etcdCalls, error)
+
+	// etcdDataChecker overrides how the presence of etcd data on a machine is checked (see
+	// hasEtcdDataOn). Nil in production; tests set it to inject a fake.
+	etcdDataChecker func(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine clusterv1.Machine) (bool, error)
+
+	// bootstrapper overrides how the Talos bootstrap request is sent to a machine (see
+	// bootstrapMachine). Nil in production; tests set it to inject a fake.
+	bootstrapper func(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machine clusterv1.Machine) error
 }
 
 func (r *TalosControlPlaneReconciler) SetupWithManager(mgr ctrl.Manager, options controller.Options) error {
@@ -535,86 +541,6 @@ func (r *TalosControlPlaneReconciler) bootControlPlane(ctx context.Context, clus
 	return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 }
 
-func (r *TalosControlPlaneReconciler) bootstrapCluster(ctx context.Context, tcp *controlplanev1.TalosControlPlane, machines []clusterv1.Machine) error {
-	ctx, cancel := context.WithTimeout(ctx, time.Second*5)
-
-	defer cancel()
-
-	c, err := r.talosconfigForMachines(ctx, tcp, machines...)
-	if err != nil {
-		return err
-	}
-
-	defer c.Close() //nolint:errcheck
-
-	addresses := []string{}
-	for _, machine := range machines {
-		found := false
-
-		// Prefer finding an InternalIP address for the machine first.
-		for _, addr := range machine.Status.Addresses {
-			if addr.Type == clusterv1.MachineInternalIP {
-				addresses = append(addresses, addr.Address)
-
-				found = true
-
-				break
-			}
-		}
-
-		if found {
-			continue
-		}
-
-		// Fallback to finding an ExternalIP address for the machine
-		// if no InternalIP is found.
-		for _, addr := range machine.Status.Addresses {
-			if addr.Type == clusterv1.MachineExternalIP {
-				addresses = append(addresses, addr.Address)
-
-				found = true
-
-				break
-			}
-		}
-
-		if !found {
-			return fmt.Errorf("machine %q doesn't have an any InternalIP or ExternalIP address yet", machine.Name)
-		}
-	}
-
-	if len(addresses) == 0 {
-		return fmt.Errorf("no machine addresses to use for bootstrap")
-	}
-
-	// If the etcd data directory exists on at least one node the cluster was already
-	// bootstrapped. Each node is asked on its own: Talos deprecated server-side fan-out, so a
-	// node that cannot answer surfaces as an error for that node rather than as a per-message
-	// status, and is treated the same way (as not bootstrapped there).
-	for _, address := range addresses {
-		bootstrapped, err := hasEtcdData(talosclient.WithNode(ctx, address), c)
-		if err != nil {
-			r.Log.Info("could not check for etcd data on node", "address", address, "error", err.Error())
-
-			continue
-		}
-
-		if bootstrapped {
-			return nil
-		}
-	}
-
-	sort.Strings(addresses)
-
-	if err := c.Bootstrap(talosclient.WithNode(ctx, addresses[0]), &machineapi.BootstrapRequest{}); err != nil {
-		if status.Code(err) != codes.AlreadyExists {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // hasEtcdData reports whether the node the context addresses has an etcd data directory.
 func hasEtcdData(ctx context.Context, c *talosclient.Client) (bool, error) {
 	list, err := c.LS(ctx, &machineapi.ListRequest{Root: "/var/lib/etcd/member"})
@@ -745,6 +671,17 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	tcp.Status.UpToDateReplicas = ptr.To(upToDateReplicas)
 	tcp.Status.ReadyReplicas = readyReplicas
 
+	// The Initialized condition always reflects the status field, whatever the probe below finds.
+	defer setInitializedCondition(tcp)
+
+	// Like KCP, the control plane is not reported initialized while its only machine is on its way
+	// out: the API server may answer in the short window between the deletion being requested and
+	// the machine going away, and a control plane initialized with no machine left is one whose
+	// replacement can never bootstrap, since bootstrapping only happens before initialization.
+	if !ptr.Deref(tcp.Status.Initialization.ControlPlaneInitialized, false) && initializationOnHold(ownedMachines.Items) {
+		return nil
+	}
+
 	// Probe workload cluster reachability to set Initialized + AvailableCondition. Failure here
 	// only suppresses the AvailableCondition; replica counters stay accurate.
 	c, err := r.ClusterCache.GetClient(ctx, util.ObjectKey(cluster))
@@ -768,6 +705,10 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 
 	// if we were able to fetch some resources via control plane endpoint,
 	// workload cluster control plane endpoint is available
+	if !ptr.Deref(tcp.Status.Initialization.ControlPlaneInitialized, false) {
+		r.Log.Info("control plane initialized: the API server answers through the control plane endpoint")
+	}
+
 	tcp.Status.Initialization.ControlPlaneInitialized = ptr.To(true)
 	conditions.Set(tcp, metav1.Condition{
 		Type:   string(controlplanev1.AvailableCondition),
@@ -778,6 +719,40 @@ func (r *TalosControlPlaneReconciler) updateStatus(ctx context.Context, tcp *con
 	r.Log.Info("ready replicas", "count", tcp.Status.ReadyReplicas)
 
 	return nil
+}
+
+// initializationOnHold reports whether the control plane must not be reported initialized yet
+// even if its API server answers: when its only machine is being deleted or has been handed
+// over for remediation. Like KCP's setControlPlaneInitialized.
+func initializationOnHold(machines []clusterv1.Machine) bool {
+	if len(machines) != 1 {
+		return false
+	}
+
+	m := &machines[0]
+
+	return !m.DeletionTimestamp.IsZero() || collections.IsUnhealthyAndOwnerRemediated(m)
+}
+
+// setInitializedCondition mirrors status.initialization.controlPlaneInitialized on the
+// Initialized condition.
+func setInitializedCondition(tcp *controlplanev1.TalosControlPlane) {
+	if ptr.Deref(tcp.Status.Initialization.ControlPlaneInitialized, false) {
+		conditions.Set(tcp, metav1.Condition{
+			Type:   string(controlplanev1.InitializedCondition),
+			Status: metav1.ConditionTrue,
+			Reason: controlplanev1.InitializedReason,
+		})
+
+		return
+	}
+
+	conditions.Set(tcp, metav1.Condition{
+		Type:    string(controlplanev1.InitializedCondition),
+		Status:  metav1.ConditionFalse,
+		Reason:  controlplanev1.NotInitializedReason,
+		Message: "Waiting for the API server to answer through the control plane endpoint",
+	})
 }
 
 func (r *TalosControlPlaneReconciler) reconcileExternalReference(ctx context.Context, ref clusterv1.ContractVersionedObjectReference, cluster *clusterv1.Cluster) error {
@@ -1017,6 +992,16 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 		return ctrl.Result{}, err
 	}
 
+	// The first machine is bootstrapped as soon as it can be reached, before anything else is
+	// considered: nothing can register a node, join etcd or pass the preflight checks until it
+	// runs etcd and the API server. It is the Talos counterpart of `kubeadm init` running on
+	// KCP's first machine, which KCP waits for through the same preflight checks.
+	if numMachines > 0 {
+		if result, err := r.reconcileBootstrap(ctx, tcp, machines.Items); err != nil || !result.IsZero() {
+			return result, err
+		}
+	}
+
 	outdated := controlPlane.MachinesNeedingRollout()
 
 	// Offer outdated machines to the in-place update extension first. It claims the one it
@@ -1063,10 +1048,7 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 	switch {
 	// We are creating the first replica
 	case numMachines < desiredReplicas && numMachines == 0:
-		// Create new Machine w/ init
-		logger.Info("initializing control plane", "Desired", desiredReplicas, "Existing", numMachines)
-
-		return r.bootControlPlane(ctx, cluster, tcp)
+		return r.initializeControlPlane(ctx, cluster, tcp, controlPlane)
 	// We are scaling up
 	case numMachines < desiredReplicas && numMachines > 0:
 		return r.scaleUpControlPlane(ctx, cluster, tcp, controlPlane)
@@ -1083,29 +1065,6 @@ func (r *TalosControlPlaneReconciler) reconcileMachines(ctx context.Context, clu
 
 		return res, err
 	default:
-		if !tcp.Status.Bootstrapped {
-			if err := r.bootstrapCluster(ctx, tcp, machines.Items); err != nil {
-				conditions.Set(tcp, metav1.Condition{
-					Type:    string(controlplanev1.MachinesBootstrapped),
-					Status:  metav1.ConditionFalse,
-					Reason:  controlplanev1.WaitingForTalosBootReason,
-					Message: fmt.Sprintf("Failed to bootstrap cluster: %v", err),
-				})
-
-				logger.Info("bootstrap failed, retrying in 20 seconds", "error", err)
-
-				return ctrl.Result{RequeueAfter: time.Second * 20}, nil
-			}
-
-			conditions.Set(tcp, metav1.Condition{
-				Type:   string(controlplanev1.MachinesBootstrapped),
-				Status: metav1.ConditionTrue,
-				Reason: controlplanev1.MachinesBootstrappedReason,
-			})
-
-			tcp.Status.Bootstrapped = true
-		}
-
 		if conditions.Has(tcp, string(controlplanev1.MachinesAllReadyCondition)) {
 			conditions.Set(tcp, metav1.Condition{
 				Type:   string(controlplanev1.ResizedCondition),
@@ -1214,6 +1173,7 @@ func patchTalosControlPlane(ctx context.Context, patchHelper *patch.Helper, tcp 
 			string(controlplanev1.MachinesAllReadyCondition),
 			string(controlplanev1.AvailableCondition),
 			string(controlplanev1.MachinesBootstrapped),
+			string(controlplanev1.InitializedCondition),
 		}},
 	)
 

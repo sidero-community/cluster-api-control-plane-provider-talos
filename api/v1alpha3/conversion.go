@@ -80,6 +80,7 @@ func (src *TalosControlPlane) ConvertTo(dstRaw conversion.Hub) error {
 		dst.Spec.MachineTemplate.Spec.Deletion = restored.Spec.MachineTemplate.Spec.Deletion
 		dst.Status.AvailableReplicas = restored.Status.AvailableReplicas
 		dst.Status.UpToDateReplicas = restored.Status.UpToDateReplicas
+		dst.Status.BootstrappedMachine = restored.Status.BootstrappedMachine
 	}
 
 	return nil

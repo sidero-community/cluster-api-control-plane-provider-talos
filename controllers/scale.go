@@ -11,8 +11,10 @@ import (
 
 	"github.com/pkg/errors"
 	controlplanev1 "github.com/siderolabs/cluster-api-control-plane-provider-talos/api/v1beta1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/klog/v2"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/cluster-api/util/collections"
 	"sigs.k8s.io/cluster-api/util/conditions"
@@ -42,7 +44,13 @@ func (r *TalosControlPlaneReconciler) scaleUpControlPlane(ctx context.Context, c
 	// Create a new Machine w/ join
 	r.Log.Info("scaling up control plane", "Desired", desiredReplicas, "Existing", numMachines)
 
-	return r.bootControlPlane(ctx, cluster, tcp)
+	result, err := r.bootControlPlane(ctx, cluster, tcp)
+	if err != nil {
+		r.recordEvent(tcp, corev1.EventTypeWarning, "FailedScaleUp", "ScaleUp",
+			fmt.Sprintf("Failed to create additional control plane Machine for cluster %s: %v", klog.KObj(cluster), err))
+	}
+
+	return result, err
 }
 
 func (r *TalosControlPlaneReconciler) scaleDownControlPlane(
