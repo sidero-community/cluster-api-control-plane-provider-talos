@@ -6,7 +6,9 @@ package controllers_test
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"sigs.k8s.io/cluster-api/controllers/clustercache"
 	"sigs.k8s.io/cluster-api/util"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
@@ -40,9 +43,13 @@ type ControllersSuite struct {
 	suite.Suite
 
 	machineServices map[string]*machineService
-	secretsBundle   *secrets.Bundle
-	ctx             context.Context
-	cancel          context.CancelFunc
+
+	// machineServicesMu guards machineServices against the updaters adding to it while a
+	// reconcile reads it (see anyMachineBootstrapped).
+	machineServicesMu sync.Mutex
+	secretsBundle     *secrets.Bundle
+	ctx               context.Context
+	cancel            context.CancelFunc
 }
 
 func (suite *ControllersSuite) SetupSuite() {
@@ -64,7 +71,9 @@ func (suite *ControllersSuite) startMachineServer() (*machineService, string) {
 	machineService, machineAddress, err := startMachineServer(suite.ctx, suite.secretsBundle)
 	suite.Require().NoError(err)
 
+	suite.machineServicesMu.Lock()
 	suite.machineServices[machineAddress] = machineService
+	suite.machineServicesMu.Unlock()
 
 	return machineService, machineAddress
 }
@@ -806,6 +815,13 @@ func (suite *ControllersSuite) TestBootstrapsTheFirstMachineBeforeScalingUp() {
 
 	r := newReconciler(fakeClient, withCluster(util.ObjectKey(cluster)))
 
+	// The workload API server only answers once a node was bootstrapped, which is what makes the
+	// control plane initialized; the fake cluster cache would otherwise answer from the start.
+	r.ClusterCache = &bootstrapGatedClusterCache{
+		ClusterCache: r.ClusterCache,
+		ready:        func() bool { return suite.anyMachineBootstrapped(fakeClient, cluster) },
+	}
+
 	// The first reconcile adds the finalizer; the second creates the first machine, with
 	// nothing else to go on: that is the machine that has to be bootstrapped.
 	result, err := r.Reconcile(suite.ctx, ctrl.Request{NamespacedName: util.ObjectKey(tcp)})
@@ -869,6 +885,44 @@ func (suite *ControllersSuite) TestBootstrapsTheFirstMachineBeforeScalingUp() {
 	}
 
 	g.Expect(bootstrapCalls).To(Equal(1))
+}
+
+// bootstrapGatedClusterCache refuses workload cluster clients until ready reports true, the way a
+// real workload API server cannot be reached before a node was bootstrapped.
+type bootstrapGatedClusterCache struct {
+	clustercache.ClusterCache
+
+	ready func() bool
+}
+
+func (c *bootstrapGatedClusterCache) GetClient(ctx context.Context, cluster client.ObjectKey) (client.Client, error) {
+	if !c.ready() {
+		return nil, errors.New("the workload API server does not answer: no node was bootstrapped")
+	}
+
+	return c.ClusterCache.GetClient(ctx, cluster)
+}
+
+// anyMachineBootstrapped reports whether the fake Talos node of any of the cluster's machines
+// received a bootstrap request. Nodes of other tests are not looked at.
+func (suite *ControllersSuite) anyMachineBootstrapped(fakeClient client.Client, cluster *clusterv1.Cluster) bool {
+	machineList := &clusterv1.MachineList{}
+	if err := fakeClient.List(suite.ctx, machineList, client.InNamespace(cluster.Namespace)); err != nil {
+		return false
+	}
+
+	suite.machineServicesMu.Lock()
+	defer suite.machineServicesMu.Unlock()
+
+	for _, m := range machineList.Items {
+		for _, addr := range m.Status.Addresses {
+			if ms, ok := suite.machineServices[addr.Address]; ok && ms.getBootstrapCalls() > 0 {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // runBootstrapAwareUpdater plays the infrastructure and the nodes: a machine gets an address as
