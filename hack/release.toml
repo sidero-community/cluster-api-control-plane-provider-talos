@@ -12,7 +12,7 @@ match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 ignore_deps = ["github.com/siderolabs/cluster-api-bootstrap-provider-talos"]
 
 # previous release
-previous = "v0.9.0"
+previous = "v0.10.0"
 
 pre_release = false
 
@@ -21,60 +21,41 @@ preface = """\
 
 [notes]
 
-[notes.failuredomains]
-    title = "Failure Domain Spreading"
+[notes.a-health]
+    title = "Control plane static pods in the health check"
         description = """\
-Control plane machines now stay spread across failure domains during a rollout, not only when
-the cluster is first created. A new machine goes to the domain holding the fewest up-to-date
-machines, ties are broken by the fewest machines overall, and scaling down removes a machine
-from the domain holding the most, so a rolling update no longer drains a domain.
-
-The failure domain chosen for each machine is logged along with the domains that were eligible.
+The control plane health check now reads the kubelet's status of the kube-apiserver,
+kube-controller-manager and kube-scheduler static pods through the Talos resource API, on top
+of the Talos services it already inspected, and every component has to be present and Ready,
+as in the Kubeadm Control Plane provider's health check. These components are static pods the
+kubelet runs, not Talos services, so a kube-apiserver that cannot start on its configuration
+was invisible before. The `ControlPlaneComponentsHealthy` condition and every preflight check
+pick this up.
 """
 
-[notes.etcd]
-    title = "etcd health check"
+[notes.b-inplace]
+    title = "In-place updates"
         description = """\
-The etcd health check inspects the control plane machines concurrently, each with its own
-timeout, and verifies etcd membership instead of counting members: every machine must have a
-member, matched by its node name or any `MachineHostName` address, a member matching no machine
-is an orphan, and a machine without a node yet claims one unmatched member. The
-`EtcdClusterHealthy` condition reports `EtcdClusterQuorumLost` when too few members are healthy
-for quorum and `EtcdClusterInspectionFailed` when too few machines could be inspected to tell,
-instead of `EtcdClusterUnhealthy` for every failure. The pre-terminate hook matches the leaving
-member by the same names.
+The next in-place update waits until the control plane components of every other machine are
+healthy, as the Kubeadm Control Plane provider's preflight checks hold a rollout; the machine
+about to be updated is exempt, since the update may be what repairs it. Together with the
+bootstrap provider v0.10.0, whose extension waits for the restarted kube-apiserver before
+reporting an update complete, a configuration kube-apiserver cannot start on now stops at the
+first machine instead of rolling across the control plane.
 """
 
-[notes.remediation]
-    title = "MachineHealthCheck remediation"
+[notes.c-remediation]
+    title = "Remediation of a machine mid-update"
         description = """\
-Control plane Machines that a MachineHealthCheck hands to the control plane are now remediated, as
-KCP does: one at a time, only while removing the etcd member keeps quorum, and within the retry
-limits of the new `spec.remediation` block (`maxRetry`, `retryPeriodSeconds`,
-`minHealthyPeriodSeconds`), which default to 3 retries, 5 minutes apart, for replacements that
-fail within an hour. Remediation deletes the Machine and nothing else; the pre-terminate hook
-removes the etcd member and the regular scale-up creates the replacement, through a narrower
-preflight check while the remediation is in progress so that a control plane with more than one
-failure recovers one machine at a time. The quorum check reads the etcd statuses recorded by the
-health check of the same reconcile instead of probing etcd again. Remediation waits for a version
-upgrade pending from the cluster topology and for in-place updates; before the control plane is
-initialized it replaces a machine while nothing was bootstrapped, or a machine that never joined
-when another machine holds the bootstrapped etcd data.
-
-Why a machine waits is reported on its `OwnerRemediated` condition (`RemediationDeferred`,
-`CannotBeRemediated`), the latter also as a `CannotRemediateMachine` warning event on the
-TalosControlPlane; a remediated machine gets a `RemediatingMachine` event. The TalosControlPlane
-gains a `Remediating` condition and `status.lastRemediation`, as the KubeadmControlPlane has.
-
-The pre-terminate hook now identifies the etcd member of a machine that never registered a node
-by elimination, and releases the deletion right away instead of after the fail-open deadline when
-the member cannot be told apart; the quorum safeguard probes the remaining machines concurrently.
+Remediation no longer waits for the flagged machine's own in-place update to complete, only
+for another machine's: deleting the machine stops its update, since the bootstrap provider
+v0.10.0 cancels a running Talos upgrade when it sees the deletion, and a machine that an
+update broke is exactly what remediation is for.
 """
 
-[notes.deps]
+[notes.d-deps]
     title = "Dependencies"
         description = """\
-The fork is rebased onto the upstream `siderolabs/cluster-api-control-plane-provider-talos`
-main. Kubernetes libraries 0.37.2, controller-runtime 0.25.2, Cluster API 1.14.3, Talos
-machinery 1.14.5 and the bootstrap provider v0.9.1.
+The bootstrap provider v0.10.0, which the remediation change above relies on; the COSI runtime,
+already present through the Talos machinery, becomes a direct dependency for the resource reads.
 """

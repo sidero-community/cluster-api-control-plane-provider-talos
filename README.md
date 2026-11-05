@@ -37,8 +37,9 @@ This provider's versions are compatible with the following versions of Cluster A
 | Control Plane Provider Talos v1alpha3 (v0.8) |                 |                 |                | ✓                |
 | Control Plane Provider Talos v1alpha3 (v0.9) |                 |                 |                | ✓                |
 | Control Plane Provider Talos v1alpha3 (v0.10)|                 |                 |                | ✓                |
+| Control Plane Provider Talos v1alpha3 (v0.11)|                 |                 |                | ✓                |
 
-The `v0.6.x`, `v0.7.x`, `v0.8.x`, `v0.9.x` and `v0.10.x` release series target the Cluster API `v1beta2` contract (CAPI core `v1.12+`; `v0.8.x` and `v0.9.x` are built against `v1.14.2`, `v0.10.x` against `v1.14.3`, which adds Kubernetes 1.37 for management and workload clusters).
+The `v0.6.x`, `v0.7.x`, `v0.8.x`, `v0.9.x`, `v0.10.x` and `v0.11.x` release series target the Cluster API `v1beta2` contract (CAPI core `v1.12+`; `v0.8.x` and `v0.9.x` are built against `v1.14.2`, `v0.10.x` and `v0.11.x` against `v1.14.3`, which adds Kubernetes 1.37 for management and workload clusters).
 Released `v0.5.x` artifacts remain on `v1beta1`; `config/metadata/metadata.yaml` advertises the `v0.6` series as `v1beta2`.
 
 The `v0.8.x` series drops `spec.controlPlaneConfig.init` (deprecated since v0.4.0) and the
@@ -53,6 +54,11 @@ The `v0.10.x` series remediates control plane machines that a `MachineHealthChec
 (see [Remediation](#remediation)) and adds `spec.remediation`; it is built against CAPI `v1.14.3`
 and controller-runtime `v0.25`.
 
+The `v0.11.x` series checks the control plane static pods (kube-apiserver, kube-controller-manager,
+kube-scheduler) as part of the control plane health check, holds the next in-place update until
+they are ready on the other machines, and remediates a machine in the middle of its own in-place
+update; it requires the bootstrap provider `v0.10.0` or later for the latter.
+
 This provider's versions are able to install and manage the following versions of Kubernetes:
 
 |                                              | v1.16 | v1.17 | v1.18 | v1.19 | v1.20 | v1.21 | v1.22 | v1.23 | v1.24 | v1.25 | v1.26 | v1.27 | v1.28 | v1.29 | v1.30 | v1.31 | v1.32 | v1.33 | v1.34 | v1.35 | v1.36 | v1.37 |
@@ -66,6 +72,7 @@ This provider's versions are able to install and manage the following versions o
 | Control Plane Provider Talos v1alpha3 (v0.8) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
 | Control Plane Provider Talos v1alpha3 (v0.9) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
 | Control Plane Provider Talos v1alpha3 (v0.10)|       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
+| Control Plane Provider Talos v1alpha3 (v0.11)|       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
 
 This provider's versions are compatible with the following versions of Talos:
 
@@ -80,6 +87,7 @@ This provider's versions are compatible with the following versions of Talos:
 | Control Plane Provider Talos v1alpha3 (v0.8) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
 | Control Plane Provider Talos v1alpha3 (v0.9) |       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
 | Control Plane Provider Talos v1alpha3 (v0.10)|       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
+| Control Plane Provider Talos v1alpha3 (v0.11)|       |        |       |       |       |       |       |       |       |       |       |       |       |       | ✓     | ✓     | ✓     | ✓     | ✓     | ✓     |
 
 ## Building and Installing
 
@@ -116,7 +124,7 @@ If you are going to use this provider as part of Sidero management plane, please
 on how to install and configure it.
 
 This project can be built simply by running `make release` from the root directory.
-Building requires Go 1.26+ (the `v0.8.x` and `v0.9.x` series depend on CAPI `v1.14.2` / controller-runtime `v0.24`, `v0.10.x` on CAPI `v1.14.3` / controller-runtime `v0.25`).
+Building requires Go 1.26+ (the `v0.8.x` and `v0.9.x` series depend on CAPI `v1.14.2` / controller-runtime `v0.24`, `v0.10.x` and `v0.11.x` on CAPI `v1.14.3` / controller-runtime `v0.25`).
 Doing so will create a file called `_out/control-plane-components.yaml`.
 If you wish, you can tweak settings by editing the release yaml.
 This file can then be installed into your management cluster with `kubectl apply -f _out/control-plane-components.yaml`.
