@@ -12,7 +12,7 @@ match_deps = "^github.com/(talos-systems/[a-zA-Z0-9-]+)$"
 ignore_deps = ["github.com/siderolabs/cluster-api-bootstrap-provider-talos"]
 
 # previous release
-previous = "v0.10.0"
+previous = "v0.11.0"
 
 pre_release = false
 
@@ -21,68 +21,31 @@ preface = """\
 
 [notes]
 
-[notes.0-bootstrap]
-    title = "Bootstrapping a new control plane"
+[notes.a-rotated-infra]
+    title = "In-place updates after an infrastructure template rotation"
         description = """\
-A new control plane with more than one replica now comes up. Since v0.9.0 the scale-up waited
-for preflight checks that need a node on every machine, while the Talos bootstrap request was
-only sent once every replica existed, so a fresh control plane stopped at its first machine;
-control planes that were already bootstrapped were not affected. As in the Kubeadm Control
-Plane provider, the first machine is now bootstrapped as soon as it reports an address and
-before any other machine is created, and the remaining replicas join one at a time behind the
-preflight checks.
-
-Every reachable machine is first checked for an etcd data directory, and a machine that has
-one is recorded instead of bootstrapped; nothing is bootstrapped while a reachable machine
-cannot be asked, and an initialized control plane is never bootstrapped. The new
-`status.bootstrappedMachine` records the machine, the way the Kubeadm bootstrap provider's init
-lock records the init machine: should that Machine be gone before the control plane is
-initialized, the machine holding the etcd data is recorded, or another machine is bootstrapped
-when none does. The control plane is not reported initialized while its only machine is being
-deleted or handed over for remediation, a new `Initialized` condition mirrors
-`status.initialization.controlPlaneInitialized`, and `FailedInitialization` and `FailedScaleUp`
-events report machine creation failures.
-
-This release was re-published on 2026-11-05 with this fix. The artifacts first published as
-v0.11.0 could not create a control plane with more than one replica.
+A control plane machine whose InfraMachine was cloned from a superseded infrastructure template
+is now offered to the in-place update extension instead of always being replaced. Its
+InfraMachine is rebuilt from the current template, keeping the fields the infrastructure provider
+set on the machine: the contract's `spec.providerID` and, per kind, a known list (TinkerbellMachine:
+`spec.hardwareName`). For other kinds a rotated template still means a replacement. The extension
+decides as for any other change; with the bootstrap provider v0.10.2, a TinkerbellMachine change
+to `tasks`, `templateInline`, `templateRef`, `hardwareAffinity` or `bootOptions` is absorbed and
+the machine is not re-imaged. The rebuilt InfraMachine is written with a merge patch, so the old
+template's fields are removed even when an earlier create still co-owns them, and its cloned-from
+annotations are re-stamped.
 """
 
-
-[notes.a-health]
-    title = "Control plane static pods in the health check"
+[notes.b-uptodate]
+    title = "UpToDate condition message"
         description = """\
-The control plane health check now reads the kubelet's status of the kube-apiserver,
-kube-controller-manager and kube-scheduler static pods through the Talos resource API, on top
-of the Talos services it already inspected, and every component has to be present and Ready,
-as in the Kubeadm Control Plane provider's health check. These components are static pods the
-kubelet runs, not Talos services, so a kube-apiserver that cannot start on its configuration
-was invisible before. The `ControlPlaneComponentsHealthy` condition and every preflight check
-pick this up.
+The `UpToDate` condition of an outdated control plane machine says which check it fails: its
+Kubernetes version, its InfraMachine (with the template it was cloned from and the one
+required), or its TalosConfig.
 """
 
-[notes.b-inplace]
-    title = "In-place updates"
-        description = """\
-The next in-place update waits until the control plane components of every other machine are
-healthy, as the Kubeadm Control Plane provider's preflight checks hold a rollout; the machine
-about to be updated is exempt, since the update may be what repairs it. Together with the
-bootstrap provider v0.10.0, whose extension waits for the restarted kube-apiserver before
-reporting an update complete, a configuration kube-apiserver cannot start on now stops at the
-first machine instead of rolling across the control plane.
-"""
-
-[notes.c-remediation]
-    title = "Remediation of a machine mid-update"
-        description = """\
-Remediation no longer waits for the flagged machine's own in-place update to complete, only
-for another machine's: deleting the machine stops its update, since the bootstrap provider
-v0.10.0 cancels a running Talos upgrade when it sees the deletion, and a machine that an
-update broke is exactly what remediation is for.
-"""
-
-[notes.d-deps]
+[notes.c-deps]
     title = "Dependencies"
         description = """\
-The bootstrap provider v0.10.0, which the remediation change above relies on; the COSI runtime,
-already present through the Talos machinery, becomes a direct dependency for the resource reads.
+No dependency updates.
 """
