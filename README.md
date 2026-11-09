@@ -57,7 +57,13 @@ and controller-runtime `v0.25`.
 The `v0.11.x` series checks the control plane static pods (kube-apiserver, kube-controller-manager,
 kube-scheduler) as part of the control plane health check, holds the next in-place update until
 they are ready on the other machines, and remediates a machine in the middle of its own in-place
-update; it requires the bootstrap provider `v0.10.0` or later for the latter.
+update; it requires the bootstrap provider `v0.10.0` or later for the latter. From `v0.11.1`, a
+machine whose infrastructure template rotated is also offered for an in-place update, when the
+provider-set fields of its InfraMachine kind are known (TinkerbellMachine: `hardwareName`, plus
+the contract's `providerID`). Its InfraMachine is rebuilt from the current template with those
+fields kept, the update extension decides whether the change can be absorbed, and a declined
+change is a replacement as before. The `UpToDate` condition of an outdated control plane
+machine now says which check it fails.
 
 This provider's versions are able to install and manage the following versions of Kubernetes:
 

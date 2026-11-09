@@ -27,10 +27,25 @@ import (
 
 // inPlacePlan is everything needed to move one Machine to the desired state in place.
 type inPlacePlan struct {
-	machine             *clusterv1.Machine
-	desiredMachine      *clusterv1.Machine
+	machine        *clusterv1.Machine
+	desiredMachine *clusterv1.Machine
+	// currentInfraMachine is the InfraMachine as it is. desiredInfraMachine is the same object
+	// unless the infrastructure template rotated, in which case it is rebuilt from the current
+	// template (see rebuildInfraMachine).
+	currentInfraMachine *unstructured.Unstructured
 	desiredInfraMachine *unstructured.Unstructured
 	desiredTalosConfig  *cabptv1.TalosConfig
+}
+
+// rebuildsInfraMachine reports whether the plan replaces the InfraMachine's spec, which is the
+// case when the infrastructure template rotated.
+func (p *inPlacePlan) rebuildsInfraMachine() bool {
+	if p.currentInfraMachine == nil || p.desiredInfraMachine == nil {
+		return false
+	}
+
+	return !reflect.DeepEqual(p.currentInfraMachine.Object["spec"], p.desiredInfraMachine.Object["spec"]) ||
+		!reflect.DeepEqual(p.currentInfraMachine.GetAnnotations(), p.desiredInfraMachine.GetAnnotations())
 }
 
 // inPlaceDecision is the outcome of offering the outdated control plane Machines to the
@@ -99,8 +114,9 @@ func (r *TalosControlPlaneReconciler) reconcileInPlaceUpdates(
 
 	candidate := r.nextInPlaceCandidate(controlPlane, outdated)
 	if candidate == nil {
-		// Nothing left the extension could take: the infrastructure template rotated, or the
-		// Machines have no node yet. Those need a replacement, as they always did.
+		// Nothing left the extension could take: the Machines have no node yet, or their
+		// infrastructure template rotated and their InfraMachine kind cannot be rebuilt (see
+		// infraIdentityFields). Those need a replacement, as they always did.
 		decision.rollout = outdated
 
 		return decision, nil
@@ -143,7 +159,7 @@ func (r *TalosControlPlaneReconciler) offerInPlace(
 	decision := newInPlaceDecision()
 	log := r.Log.WithValues("machine", klog.KObj(candidate))
 
-	plan, err := r.buildInPlacePlan(tcp, controlPlane, candidate)
+	plan, err := r.buildInPlacePlan(ctx, tcp, controlPlane, candidate)
 	if err != nil {
 		return decision, err
 	}
@@ -172,10 +188,11 @@ func (r *TalosControlPlaneReconciler) offerInPlace(
 // nextInPlaceCandidate picks an outdated Machine that is eligible to be considered for an
 // in-place update.
 //
-// Machines whose InfraMachine was cloned from a superseded template are deliberately
-// excluded. Rotating an infrastructure template means the Machine needs a new InfraMachine,
-// which this provider only produces by creating a replacement; claiming such a Machine would
-// leave it outdated forever and spin.
+// A Machine whose InfraMachine was cloned from a superseded template is a candidate only if
+// its InfraMachine can be rebuilt from the current template (canRebuildInfraMachine). The
+// in-place update then rewrites the InfraMachine and its cloned-from annotations, and that is
+// what makes it up to date. For any other kind a rotated template still means a replacement:
+// claiming such a Machine would leave it outdated forever and spin.
 func (r *TalosControlPlaneReconciler) nextInPlaceCandidate(controlPlane *ControlPlane, outdated collections.Machines) *clusterv1.Machine {
 	matchesTemplate := MatchesTemplateClonedFrom(controlPlane.infraObjects, controlPlane.TCP)
 
@@ -184,7 +201,7 @@ func (r *TalosControlPlaneReconciler) nextInPlaceCandidate(controlPlane *Control
 			continue
 		}
 
-		if !matchesTemplate(machine) {
+		if !matchesTemplate(machine) && !canRebuildInfraMachine(controlPlane.infraObjects[machine.Name]) {
 			continue
 		}
 
@@ -202,9 +219,10 @@ func (r *TalosControlPlaneReconciler) nextInPlaceCandidate(controlPlane *Control
 //
 // The desired state comes from the same fields MachinesWithOutdatedRolloutSpec compares
 // against, so that a Machine judged outdated is judged up to date once the plan is applied.
-// The InfraMachine is carried through unchanged: candidates whose infrastructure template
-// has rotated were already filtered out, so infrastructure never differs here.
+// The InfraMachine is carried through unchanged unless its infrastructure template rotated;
+// then it is rebuilt from the current template (rebuildInfraMachine).
 func (r *TalosControlPlaneReconciler) buildInPlacePlan(
+	ctx context.Context,
 	tcp *controlplanev1.TalosControlPlane,
 	controlPlane *ControlPlane,
 	machine *clusterv1.Machine,
@@ -212,10 +230,22 @@ func (r *TalosControlPlaneReconciler) buildInPlacePlan(
 	desiredMachine := machine.DeepCopy()
 	desiredMachine.Spec.Version = tcp.Spec.Version
 
+	currentInfraMachine := controlPlane.infraObjects[machine.Name]
+
 	plan := &inPlacePlan{
 		machine:             machine,
 		desiredMachine:      desiredMachine,
-		desiredInfraMachine: controlPlane.infraObjects[machine.Name],
+		currentInfraMachine: currentInfraMachine,
+		desiredInfraMachine: currentInfraMachine,
+	}
+
+	if currentInfraMachine != nil && !MatchesTemplateClonedFrom(controlPlane.infraObjects, tcp)(machine) {
+		desiredInfraMachine, err := rebuildInfraMachine(ctx, r.Client, tcp, currentInfraMachine)
+		if err != nil {
+			return nil, fmt.Errorf("cannot plan in-place update for %s: %w", klog.KObj(machine), err)
+		}
+
+		plan.desiredInfraMachine = desiredInfraMachine
 	}
 
 	current, ok := controlPlane.talosConfigs[machine.Name]
@@ -256,7 +286,7 @@ func (r *TalosControlPlaneReconciler) canUpdateMachine(ctx context.Context, plan
 	req := &runtimehooksv1.CanUpdateMachineRequest{
 		Current: runtimehooksv1.CanUpdateMachineRequestObjects{
 			Machine:               *cleanMachine(plan.machine),
-			InfrastructureMachine: rawFrom(plan.desiredInfraMachine),
+			InfrastructureMachine: rawFrom(plan.currentInfraMachine),
 			BootstrapConfig:       rawFrom(currentTalosConfig),
 		},
 		Desired: runtimehooksv1.CanUpdateMachineRequestObjects{

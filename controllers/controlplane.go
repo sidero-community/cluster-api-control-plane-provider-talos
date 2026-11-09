@@ -6,8 +6,10 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 
 	cabptv1 "github.com/siderolabs/cluster-api-bootstrap-provider-talos/api/v1beta1"
 
@@ -246,9 +248,10 @@ func (c *ControlPlane) reconcileMachineUpToDateConditions(ctx context.Context, c
 
 		if _, isOutdated := outdated[machine.Name]; isOutdated {
 			conditions.Set(machine, metav1.Condition{
-				Type:   clusterv1.MachineUpToDateCondition,
-				Status: metav1.ConditionFalse,
-				Reason: clusterv1.MachineNotUpToDateReason,
+				Type:    clusterv1.MachineUpToDateCondition,
+				Status:  metav1.ConditionFalse,
+				Reason:  clusterv1.MachineNotUpToDateReason,
+				Message: c.notUpToDateMessage(machine),
 			})
 		} else {
 			conditions.Set(machine, metav1.Condition{
@@ -264,6 +267,34 @@ func (c *ControlPlane) reconcileMachineUpToDateConditions(ctx context.Context, c
 	}
 
 	return kerrors.NewAggregate(errs)
+}
+
+// notUpToDateMessage says which of the MatchesSpec checks a Machine fails, in the format the
+// core Machine controller uses for the UpToDate condition of MachineDeployment machines, so
+// that `kubectl describe` shows why a control plane Machine is outdated.
+func (c *ControlPlane) notUpToDateMessage(machine *clusterv1.Machine) string {
+	var reasons []string
+
+	if !collections.MatchesKubernetesVersion(c.TCP.Spec.Version)(machine) {
+		reasons = append(reasons, fmt.Sprintf("Version %s, %s required", machine.Spec.Version, c.TCP.Spec.Version))
+	}
+
+	if !MatchesTemplateClonedFrom(c.infraObjects, c.TCP)(machine) {
+		kind := strings.TrimSuffix(c.TCP.Spec.MachineTemplate.Spec.InfrastructureRef.Kind, clusterv1.TemplateSuffix)
+		clonedFrom := c.infraObjects[machine.Name].GetAnnotations()[clusterv1.TemplateClonedFromNameAnnotation]
+		reasons = append(reasons, fmt.Sprintf("%s is not up-to-date: cloned from %s, %s required",
+			kind, clonedFrom, c.TCP.Spec.MachineTemplate.Spec.InfrastructureRef.Name))
+	}
+
+	if !MatchesControlPlaneConfig(c.talosConfigs, c.TCP)(machine) {
+		reasons = append(reasons, "TalosConfig is not up-to-date")
+	}
+
+	for i := range reasons {
+		reasons[i] = "* " + reasons[i]
+	}
+
+	return strings.Join(reasons, "\n")
 }
 
 // getInfraResources fetches the external infrastructure resource for each machine in the collection and returns a map of machine.Name -> infraResource.

@@ -54,7 +54,11 @@ func (r *TalosControlPlaneReconciler) triggerInPlaceUpdate(ctx context.Context, 
 	}
 
 	// The InfraMachine is written first because it is the call most likely to fail.
-	if plan.desiredInfraMachine != nil {
+	if plan.rebuildsInfraMachine() {
+		if err := r.writeRebuiltInfraMachine(ctx, plan); err != nil {
+			return err
+		}
+	} else if plan.desiredInfraMachine != nil {
 		desired := plan.desiredInfraMachine.DeepCopy()
 		// Server-side apply is declarative and must not carry a resourceVersion; these
 		// desired objects are copies of live ones, so it has to be cleared or the apply
@@ -113,6 +117,33 @@ func (r *TalosControlPlaneReconciler) triggerInPlaceUpdate(ctx context.Context, 
 	}
 
 	log.Info("triggered in-place update")
+
+	return nil
+}
+
+// writeRebuiltInfraMachine writes an InfraMachine rebuilt from a rotated infrastructure
+// template (rebuildInfraMachine), together with UpdateInProgressAnnotation.
+//
+// A merge patch from the current object, not server-side apply. Rebuilding drops the fields
+// the superseded template set, and an apply removes a field only when the applier is its sole
+// owner. These InfraMachines were created with a plain create, so the pre-apply manager still
+// co-owns the template fields, and machines adopted by hand belong to whatever created them. The
+// patch writes null for each dropped field whoever owns it. The provider's own fields are in
+// the desired object unchanged, so the patch leaves them alone.
+func (r *TalosControlPlaneReconciler) writeRebuiltInfraMachine(ctx context.Context, plan *inPlacePlan) error {
+	desired := plan.desiredInfraMachine.DeepCopy()
+
+	annotations := desired.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+
+	annotations[clusterv1.UpdateInProgressAnnotation] = ""
+	desired.SetAnnotations(annotations)
+
+	if err := r.Client.Patch(ctx, desired, client.MergeFrom(plan.currentInfraMachine)); err != nil {
+		return fmt.Errorf("failed to write rebuilt InfraMachine for %s: %w", klog.KObj(plan.machine), err)
+	}
 
 	return nil
 }

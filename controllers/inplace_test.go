@@ -355,27 +355,6 @@ func TestReconcileInPlaceUpdates_ClaimsMachinesAlreadyUpdating(t *testing.T) {
 	assert.True(t, isUpdatingInPlace(f.machine))
 }
 
-func TestNextInPlaceCandidate_SkipsRotatedInfraTemplate(t *testing.T) {
-	f := newInPlaceFixture(t, nil)
-
-	// Point the TCP at a template the InfraMachine was not cloned from. Rotating an
-	// infrastructure template needs a new InfraMachine, which only a replacement produces, so
-	// claiming the machine would leave it outdated forever.
-	f.controlPlane.infraObjects["machine-1"].SetAnnotations(map[string]string{
-		clusterv1.TemplateClonedFromNameAnnotation:      "old-template",
-		clusterv1.TemplateClonedFromGroupKindAnnotation: "TinkerbellMachineTemplate.infrastructure.cluster.x-k8s.io",
-	})
-	f.tcp.Spec.MachineTemplate.Spec.InfrastructureRef = clusterv1.ContractVersionedObjectReference{
-		APIGroup: "infrastructure.cluster.x-k8s.io",
-		Kind:     "TinkerbellMachineTemplate",
-		Name:     "new-template",
-	}
-
-	candidate := f.reconciler.nextInPlaceCandidate(f.controlPlane, collections.FromMachines(f.machine))
-
-	assert.Nil(t, candidate, "a machine needing a new InfraMachine must be left to the rollout path")
-}
-
 func TestNextInPlaceCandidate_SkipsMachineWithoutNodeRef(t *testing.T) {
 	f := newInPlaceFixture(t, nil)
 	f.machine.Status.NodeRef = clusterv1.MachineNodeReference{}
@@ -394,7 +373,7 @@ func TestNextInPlaceCandidate_SkipsDeletingMachine(t *testing.T) {
 func TestCanUpdateMachine_CoveredDiffIsAccepted(t *testing.T) {
 	f := newInPlaceFixture(t, nil)
 
-	plan, err := f.reconciler.buildInPlacePlan(f.tcp, f.controlPlane, f.machine)
+	plan, err := f.reconciler.buildInPlacePlan(context.Background(), f.tcp, f.controlPlane, f.machine)
 	require.NoError(t, err)
 
 	ok, err := f.reconciler.canUpdateMachine(context.Background(), plan, f.controlPlane)
@@ -409,7 +388,7 @@ func TestCanUpdateMachine_UncoveredDiffIsDeclined(t *testing.T) {
 		resp.Status = runtimehooksv1.ResponseStatusSuccess // no patches at all
 	}
 
-	plan, err := f.reconciler.buildInPlacePlan(f.tcp, f.controlPlane, f.machine)
+	plan, err := f.reconciler.buildInPlacePlan(context.Background(), f.tcp, f.controlPlane, f.machine)
 	require.NoError(t, err)
 
 	ok, err := f.reconciler.canUpdateMachine(context.Background(), plan, f.controlPlane)
@@ -421,7 +400,7 @@ func TestCanUpdateMachine_NoExtensionRegistered(t *testing.T) {
 	f := newInPlaceFixture(t, nil)
 	f.caller.extensions = nil
 
-	plan, err := f.reconciler.buildInPlacePlan(f.tcp, f.controlPlane, f.machine)
+	plan, err := f.reconciler.buildInPlacePlan(context.Background(), f.tcp, f.controlPlane, f.machine)
 	require.NoError(t, err)
 
 	ok, err := f.reconciler.canUpdateMachine(context.Background(), plan, f.controlPlane)
@@ -435,7 +414,7 @@ func TestCanUpdateMachine_MultipleExtensionsIsAnError(t *testing.T) {
 	f := newInPlaceFixture(t, nil)
 	f.caller.extensions = []string{"a", "b"}
 
-	plan, err := f.reconciler.buildInPlacePlan(f.tcp, f.controlPlane, f.machine)
+	plan, err := f.reconciler.buildInPlacePlan(context.Background(), f.tcp, f.controlPlane, f.machine)
 	require.NoError(t, err)
 
 	_, err = f.reconciler.canUpdateMachine(context.Background(), plan, f.controlPlane)
@@ -447,7 +426,7 @@ func TestBuildInPlacePlan_UsesDesiredSpecFromTCP(t *testing.T) {
 	f := newInPlaceFixture(t, nil)
 	f.tcp.Spec.ControlPlaneConfig.ControlPlaneConfig.TalosVersion = "v1.13"
 
-	plan, err := f.reconciler.buildInPlacePlan(f.tcp, f.controlPlane, f.machine)
+	plan, err := f.reconciler.buildInPlacePlan(context.Background(), f.tcp, f.controlPlane, f.machine)
 	require.NoError(t, err)
 
 	assert.Equal(t, "v1.34.0", plan.desiredMachine.Spec.Version)
@@ -460,7 +439,7 @@ func TestBuildInPlacePlan_UsesDesiredSpecFromTCP(t *testing.T) {
 func TestTriggerInPlaceUpdate_AnnotatesAndMarksHookPending(t *testing.T) {
 	f := newInPlaceFixture(t, nil)
 
-	plan, err := f.reconciler.buildInPlacePlan(f.tcp, f.controlPlane, f.machine)
+	plan, err := f.reconciler.buildInPlacePlan(context.Background(), f.tcp, f.controlPlane, f.machine)
 	require.NoError(t, err)
 
 	require.NoError(t, f.reconciler.triggerInPlaceUpdate(context.Background(), plan))
